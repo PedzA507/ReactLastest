@@ -53,9 +53,9 @@ export default function SignInUser() {
         localStorage.setItem('token', result['token']);
         // ตรวจสอบ role ที่ได้รับจาก backend
         if (result['role'] === 'admin') {
-          navigate('/mainadmin'); // นำทางไปยังหน้าหลักของ admin
+          navigate('/dashboard'); // นำทางไปยังหน้าหลักของ admin
         } else if (result['role'] === 'employee') {
-          navigate('/mainadmin'); // นำทางไปยังหน้าหลักของ employee
+          navigate('/dashboard'); // นำทางไปยังหน้าหลักของ employee
         } else {
           navigate('/cusview'); // นำทางไปยังหน้าหลักของ customer
         }

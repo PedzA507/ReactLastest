@@ -93,14 +93,6 @@ export default function Cusview() {
             <Typography component="p" variant="h6" sx={{ mb: 4 }}>
               You have successfully logged in as a customer!
             </Typography>
-            <Button
-              variant="contained"
-              color="primary"
-              sx={{ padding: '10px 20px' }}
-              onClick={() => navigate('/dashboard')}
-            >
-              Go to Dashboard
-            </Button>
           </Box>
           <Copyright sx={{ mt: 5 }} />
         </Container>

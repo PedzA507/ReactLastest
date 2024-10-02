@@ -9,6 +9,14 @@ import Dashboard from './components/Dashboard';
 import Cusview from './components/Cusview';
 import AddEmployee from './components/AddEmployee';
 
+import CustomerIndex from './components/admin/customer/Index';
+import CustomerCreate from './components/admin/customer/Create';
+import CustomerView from './components/admin/customer/View';
+import CustomerUpdate from './components/admin/customer/Update';
+
+import OrderIndex from './components/admin/order/Index';
+import OrderView from './components/admin/order/View';
+import PaymentView from './components/admin/payment/View';
 
 function App() {
   return (
@@ -22,6 +30,16 @@ function App() {
         <Route exact path='/dashboard' element={<Dashboard />} />
         <Route exact path='/cusview' element={<Cusview />} />
         <Route exact path='/addemployee' element={<AddEmployee />} />
+        
+
+
+        <Route exact path='/admin/customer' element={<CustomerIndex/>}/>
+        <Route exact path='/admin/customer/create' element={<CustomerCreate/>}/>  
+        <Route exact path='/admin/customer/view/:id' element={<CustomerView/>}/>      
+        <Route exact path='/admin/customer/update/:id' element={<CustomerUpdate/>}/>
+        <Route exact path='/admin/order' element={<OrderIndex/>}/>
+        <Route exact path='/admin/order/view/:id' element={<OrderView/>}/>
+        <Route exact path='/admin/payment/view/:id' element={<PaymentView/>}/>
       </Routes>
     </Router>
   );

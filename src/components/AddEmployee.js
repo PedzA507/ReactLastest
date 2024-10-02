@@ -1,17 +1,40 @@
 import React, { useState } from 'react';
-import Button from '@mui/material/Button';
-import CssBaseline from '@mui/material/CssBaseline';
-import TextField from '@mui/material/TextField';
-import Grid from '@mui/material/Grid';
-import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
-import Container from '@mui/material/Container';
+import { Button, CssBaseline, TextField, Grid, Box, Typography, Container } from '@mui/material';
+import Alert from '@mui/material/Alert';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import axios from 'axios';
-import Alert from '@mui/material/Alert';
 import BackgroundImage from './assets/BG.png';
 
-const defaultTheme = createTheme();
+// Custom theme 
+const customTheme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary: {
+      main: '#1976d2',
+    },
+    background: {
+      default: '#f5f5f5',
+    },
+    text: {
+      primary: '#000000',
+      secondary: '#666666',
+    },
+  },
+  typography: {
+    h1: {
+      fontSize: '2rem',
+      fontWeight: 'bold',
+      color: '#1976d2',
+    },
+    h5: {
+      color: '#333333',
+    },
+    h6: {
+      color: '#333333',
+      fontWeight: 'bold',
+    },
+  },
+});
 
 export default function AddEmployee() {
   const [username, setUsername] = useState('');
@@ -47,7 +70,7 @@ export default function AddEmployee() {
       setStatus(result['status']);
 
       if (result['status'] === true) {
-        // รีเซ็ตค่าฟิลด์
+        // Reset fields
         setUsername('');
         setFirstName('');
         setLastName('');
@@ -63,20 +86,19 @@ export default function AddEmployee() {
   };
 
   return (
-    <ThemeProvider theme={defaultTheme}>
+    <ThemeProvider theme={customTheme}>
       <Box
         sx={{
+          display: 'flex',
           minHeight: '100vh',
+          alignItems: 'center',
+          justifyContent: 'center',
           backgroundImage: `url(${BackgroundImage})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 2,
         }}
       >
-        <Container component="main" maxWidth="sm">
+        <Container component="main" maxWidth="md"> {/* ขยาย maxWidth เป็น 'md' เพื่อรองรับข้อมูลเยอะขึ้น */}
           <CssBaseline />
           <Box
             sx={{
@@ -88,93 +110,102 @@ export default function AddEmployee() {
               padding: '40px',
               borderRadius: '15px',
               boxShadow: '0 8px 16px rgba(0, 0, 0, 0.2)',
-              minHeight: '500px',
+              width: '100%',
             }}
           >
             <Typography component="h1" variant="h4" sx={{ backgroundColor: '#b3b3ff', padding: '10px 30px', borderRadius: '15px 15px 15px 15px', color: 'white', width: '100%', textAlign: 'center', mb: 4 }}>
-              Add Employee
+            Add Employee
             </Typography>
 
-            {/* แสดงข้อความแจ้งเตือน */}
+            {/* Display message alert */}
             {message && (
               <Alert severity={status ? 'success' : 'error'} sx={{ width: '100%', mb: 2 }}>
                 {message}
               </Alert>
             )}
 
-            <Box component="form" noValidate onSubmit={handleSubmit} sx={{ mt: 3 }}>
+            <Box component="form" noValidate onSubmit={handleSubmit} sx={{ mt: 1 }}>
+              <TextField
+                required
+                fullWidth
+                id="username"
+                label="Username"
+                name="username"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                sx={{ mb: 2 }}
+              />
+              <TextField
+                required
+                fullWidth
+                id="firstname"
+                label="First Name"
+                name="firstname"
+                autoComplete="given-name"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                sx={{ mb: 2 }}
+              />
+              <TextField
+                required
+                fullWidth
+                id="lastname"
+                label="Last Name"
+                name="lastname"
+                autoComplete="family-name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                sx={{ mb: 2 }}
+              />
+              <TextField
+                fullWidth
+                id="email"
+                label="Email"
+                name="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                sx={{ mb: 2 }}
+              />
               <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <TextField
-                    required
-                    fullWidth
-                    id="username"
-                    label="Username"
-                    name="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    required
-                    fullWidth
-                    id="firstname"
-                    label="First Name"
-                    name="firstname"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    required
-                    fullWidth
-                    name="lastname"
-                    label="Last Name"
-                    id="lastname"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                  />
-                </Grid>
-                <Grid item xs={12}>
+                <Grid item xs={6}>
                   <TextField
                     fullWidth
-                    name="email"
-                    label="Email"
-                    id="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    name="gender"
-                    label="Gender"
                     id="gender"
+                    label="Gender"
+                    name="gender"
                     value={gender}
                     onChange={(e) => setGender(e.target.value)}
+                    sx={{ mb: 2 }}
                   />
                 </Grid>
-                <Grid item xs={12}>
+                <Grid item xs={6}>
                   <TextField
                     fullWidth
-                    name="positionID"
-                    label="Position ID"
                     id="positionID"
+                    label="Position ID"
+                    name="positionID"
                     value={positionID}
                     onChange={(e) => setPositionID(e.target.value)}
+                    sx={{ mb: 2 }}
                   />
                 </Grid>
               </Grid>
+
               <Button
                 type="submit"
                 fullWidth
                 variant="contained"
-                sx={{ mt: 3, mb: 2, backgroundColor: '#333', color: 'white', padding: '12px' }}
+                sx={{
+                  mt: 3,
+                  mb: 2,
+                  backgroundColor: '#333',
+                  color: 'white',
+                  padding: '12px',
+                }}
               >
-                Add Employee
+                ADD EMPLOYEE
               </Button>
             </Box>
           </Box>

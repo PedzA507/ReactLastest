@@ -1,93 +1,89 @@
 import React from 'react';
-import { AppBar, Toolbar, Typography, Grid, Card, CardContent, Button, Container, Drawer, List, ListItem, ListItemIcon, ListItemText } from '@mui/material';
+import { AppBar, Toolbar, Typography, Grid, Card, CardContent, Button, Container, Drawer, List, ListItem, ListItemIcon, ListItemText, Box } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import CssBaseline from '@mui/material/CssBaseline';
-import Box from '@mui/material/Box';
-import { createTheme, ThemeProvider } from '@mui/material/styles';
-import BackgroundImage from './assets/BG.png';
-import ChartImage from './assets/chart.png';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import HomeIcon from '@mui/icons-material/Home';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import PeopleIcon from '@mui/icons-material/People';
 import SettingsIcon from '@mui/icons-material/Settings';
 import FeedbackIcon from '@mui/icons-material/Feedback';
 import InfoIcon from '@mui/icons-material/Info';
+import { createTheme, ThemeProvider } from '@mui/material/styles';
 
-function Copyright(props) {
-  return (
-    <Typography variant="body2" color="text.secondary" align="center" {...props}>
-      {'Copyright © '}
-      <Button color="inherit" href="https://mui.com/">
-        Shopdee
-      </Button>{' '}
-      {new Date().getFullYear()}
-      {'.'}
-    </Typography>
-  );
-}
+const drawerWidth = 240;
 
-// Custom theme similar to the Login page theme
 const customTheme = createTheme({
   palette: {
-    mode: 'light',
+    mode: 'dark',
     primary: {
-      main: '#1976d2',  // Blue for accents like buttons and highlights
+      main: '#1976d2',
     },
     background: {
-      default: '#f5f5f5', // Light background for the overall page
-      paper: '#ffffff',   // White background for cards and sections
+      default: '#1f1f1f',
+      paper: '#242424',
     },
     text: {
-      primary: '#333333',  // Dark text color for high contrast
-      secondary: '#666666',  // Lighter text for secondary information
+      primary: '#ffffff',
+      secondary: '#cccccc',
     },
   },
   typography: {
     h1: {
       fontSize: '2.5rem',
-      color: '#ffffff',  // Change to white as per your request
+      color: '#ffffff',
     },
     h5: {
-      color: '#1976d2',  // Blue for card titles
+      color: '#ffffff',
     },
     h6: {
-      color: '#333333',  // Dark color for card values
+      color: '#ffffff',
       fontWeight: 'bold',
     },
   },
 });
 
-const drawerWidth = 240;
+const data = [
+  { name: 'Apr 5', sessions: 5000 },
+  { name: 'Apr 10', sessions: 7500 },
+  { name: 'Apr 15', sessions: 10000 },
+  { name: 'Apr 20', sessions: 15000 },
+  { name: 'Apr 25', sessions: 18000 },
+  { name: 'Apr 30', sessions: 20000 },
+];
+
+const pageData = [
+  { name: 'Jan', views: 10000 },
+  { name: 'Feb', views: 12000 },
+  { name: 'Mar', views: 8000 },
+  { name: 'Apr', views: 15000 },
+  { name: 'May', views: 10000 },
+  { name: 'Jun', views: 12000 },
+];
 
 export default function Dashboard() {
+  const navigate = useNavigate();
+
   const stats = [
-    { title: 'Users', value: 14000, percentage: '+25%' },
-    { title: 'Conversions', value: 325, percentage: '-25%' },
+    { title: 'Users', value: '14k', percentage: '+25%' },
+    { title: 'Conversions', value: '325', percentage: '-25%' },
     { title: 'Event Count', value: '200k', percentage: '+5%' },
     { title: 'Page Views', value: '1.3M', percentage: '-8%' },
   ];
 
-  const navigate = useNavigate();
-
-  const handleLogout = () => {
-    navigate('/choice');
-  };
-
   const menuItems = [
-    { text: 'Home', icon: <HomeIcon /> },
-    { text: 'Analytics', icon: <AnalyticsIcon /> },
-    { text: 'Clients', icon: <PeopleIcon /> },
-    { text: 'Settings', icon: <SettingsIcon /> },
-    { text: 'Feedback', icon: <FeedbackIcon /> },
-    { text: 'About', icon: <InfoIcon /> },
+    { text: 'Home', icon: <HomeIcon />, action: () => navigate('/admin/customer') },
+    { text: 'Add Employee', icon: <AnalyticsIcon />, action: () => navigate('/addemployee') },
+    { text: 'Clients', icon: <PeopleIcon />, action: () => navigate('/admin/customer') },
+    { text: 'Tasks', icon: <AnalyticsIcon /> },
+    { text: 'Settings', icon: <SettingsIcon />},
+    { text: 'Feedback', icon: <FeedbackIcon />,},
+    { text: 'About', icon: <InfoIcon />, },
   ];
 
   return (
     <ThemeProvider theme={customTheme}>
-      <Box sx={{ display: 'flex', minHeight: '100vh', backgroundImage: `url(${BackgroundImage})`, backgroundSize: 'cover' }}>
-        <CssBaseline />
-
-        {/* Sidebar (Menu ด้านซ้าย) */}
+      <Box sx={{ display: 'flex' }}>
+        {/* Sidebar */}
         <Drawer
           variant="permanent"
           sx={{
@@ -95,9 +91,8 @@ export default function Dashboard() {
             flexShrink: 0,
             '& .MuiDrawer-paper': {
               width: drawerWidth,
-              boxSizing: 'border-box',
-              backgroundColor: '#1f1f1f',  // Dark background for the sidebar
-              color: '#ffffff', // White text
+              backgroundColor: '#1f1f1f',
+              color: '#ffffff',
             },
           }}
         >
@@ -105,8 +100,8 @@ export default function Dashboard() {
           <Box sx={{ overflow: 'auto' }}>
             <List>
               {menuItems.map((item, index) => (
-                <ListItem button key={item.text}>
-                  <ListItemIcon sx={{ color: '#ffffff' }}> {/* Icons color to white */}
+                <ListItem button key={item.text} onClick={item.action}>
+                  <ListItemIcon sx={{ color: '#ffffff' }}>
                     {item.icon}
                   </ListItemIcon>
                   <ListItemText primary={item.text} />
@@ -121,76 +116,71 @@ export default function Dashboard() {
           component="main"
           sx={{
             flexGrow: 1,
-            padding: 4,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            backgroundColor: 'rgba(255, 255, 255, 0.9)',
-            borderRadius: '15px',
-            margin: '16px',
-            boxShadow: '0 8px 16px rgba(0, 0, 0, 0.2)',
+            padding: 3,
+            backgroundColor: '#121212',
+            minHeight: '100vh',
           }}
         >
-          <AppBar position="static" style={{ backgroundColor: '#1976d2', width: '100%' }}>
+          <AppBar position="static" sx={{ backgroundColor: '#1976d2' }}>
             <Toolbar>
-              <Typography variant="h6" sx={{ color: '#ffffff', flexGrow: 1 }}>  {/* Change Dashboard text color to white */}
+              <Typography variant="h6" sx={{ flexGrow: 1 }}>
                 Dashboard
               </Typography>
-              <Button color="inherit" onClick={handleLogout}>Logout</Button>
+              <Button color="inherit" onClick={() => navigate('/signinuser')}>
+                Logout
+              </Button>
             </Toolbar>
           </AppBar>
 
-          <Container component="main" maxWidth="lg" sx={{ mt: 4 }}>
-            <Box
-              sx={{
-                backgroundColor: 'rgba(255, 255, 255, 0.9)', // Semi-transparent white for card background
-                padding: 4,
-                borderRadius: '15px',
-                boxShadow: '0 8px 16px rgba(0, 0, 0, 0.2)',
-              }}
-            >
-              <Typography component="h1" variant="h2" sx={{ mb: 4, textAlign: 'center' }}>
-                Overview
+          <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+            <Grid container spacing={3}>
+              {stats.map((stat, index) => (
+                <Grid item xs={12} sm={6} md={3} key={index}>
+                  <Card sx={{ backgroundColor: '#242424', color: '#ffffff' }}>
+                    <CardContent>
+                      <Typography variant="h5">{stat.title}</Typography>
+                      <Typography variant="h6">{stat.value}</Typography>
+                      <Typography variant="body2" color={stat.percentage.startsWith('+') ? 'green' : 'red'}>
+                        {stat.percentage}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
+
+            {/* Line Chart Section */}
+            <Box sx={{ mt: 4, backgroundColor: '#242424', padding: 2, borderRadius: 1 }}>
+              <Typography variant="h6" gutterBottom>
+                Sessions (Last 30 Days)
               </Typography>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={data}>
+                  <CartesianGrid stroke="#ccc" />
+                  <XAxis dataKey="name" stroke="#ccc" />
+                  <YAxis stroke="#ccc" />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="sessions" stroke="#8884d8" />
+                </LineChart>
+              </ResponsiveContainer>
+            </Box>
 
-              {/* Stats Section */}
-              <Grid container spacing={3} justifyContent="center">
-                {stats.map((stat, index) => (
-                  <Grid item xs={12} sm={6} md={3} key={index}>
-                    <Card elevation={3} sx={{ backgroundColor: '#f5f5f5', color: '#333333' }}>
-                      <CardContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <Typography variant="h5">{stat.title}</Typography>
-                        <Typography variant="h6" sx={{ mt: 2 }}>
-                          {stat.value}
-                        </Typography>
-                        <Typography variant="body2" color={stat.percentage.startsWith('+') ? 'green' : 'red'}>
-                          {stat.percentage}
-                        </Typography>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                ))}
-              </Grid>
-
-              {/* Chart Section */}
-              <Box
-                sx={{
-                  mt: 6,
-                  backgroundColor: '#ffffff',
-                  padding: 3,
-                  borderRadius: '15px',
-                  boxShadow: '0 4px 8px rgba(0, 0, 0, 0.2)',
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                }}
-              >
-                <img src={ChartImage} alt="Chart" style={{ width: '80%', height: 'auto' }} />
-              </Box>
+            {/* Bar Chart Section */}
+            <Box sx={{ mt: 4, backgroundColor: '#242424', padding: 2, borderRadius: 1 }}>
+              <Typography variant="h6" gutterBottom>
+                Page Views (Last 6 Months)
+              </Typography>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={pageData}>
+                  <CartesianGrid stroke="#ccc" />
+                  <XAxis dataKey="name" stroke="#ccc" />
+                  <YAxis stroke="#ccc" />
+                  <Tooltip />
+                  <Bar dataKey="views" fill="#8884d8" />
+                </BarChart>
+              </ResponsiveContainer>
             </Box>
           </Container>
-
-          <Copyright sx={{ mt: 5 }} />
         </Box>
       </Box>
     </ThemeProvider>
