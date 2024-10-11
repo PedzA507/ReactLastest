@@ -1,1481 +1,810 @@
-const express = require('express')
-const mysql = require('mysql2')
-const app = express()
-const port = 4000
-
-const https = require('https');
-const fs = require('fs');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const SECRET_KEY = 'UX23Y24%@&2aMb';
-
-const fileupload = require('express-fileupload');
-const path = require('path');
+const express = require('express');
+const mysql = require('mysql2');
+const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
+require('dotenv').config();
 
-// Load SSL certificates
-const privateKey = fs.readFileSync('privatekey.pem', 'utf8');
-const certificate = fs.readFileSync('certificate.pem', 'utf8');
-const credentials = { key: privateKey, cert: certificate };
+const app = express();
+const saltRounds = 10;
 
-// Import CORS library
-const cors = require('cors');
-
-//Database(MySql) configulation
-const db = mysql.createConnection(
-    {
-        host: "localhost",
-        user: "root",
-        password: "1234",
-        database: "shopdee"
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, 'assets/user/');  // เปลี่ยนจาก 'uploads/' เป็น 'assets/user/'
+    },
+    filename: function (req, file, cb) {
+        cb(null, file.originalname);  // ใช้ชื่อไฟล์เดิม
     }
-)
-db.connect()
+});
 
-//Middleware (Body parser)
-app.use(express.json())
-app.use(express.urlencoded ({extended: true}))
-app.use(cors());
-app.use(fileupload());
+const upload = multer({ storage: storage });
 
-//Hello World API
-app.get('/', function(req, res){
-    res.send('Hello World!')
+const db = mysql.createConnection({
+    host: process.env.DATABASE_HOST,
+    user: process.env.DATABASE_USER,
+    password: process.env.DATABASE_PASSWORD,
+    database: process.env.DATABASE_NAME
+});
+
+db.connect();
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static('uploads'));
+
+// Nodemailer Transporter Configuration
+const transporter = nodemailer.createTransport({
+    service: process.env.EMAIL_SERVICE,
+    host: 'smtp.gmail.com',
+    port: process.env.EMAIL_PORT,
+    secure: false, // ใช้ false สำหรับ port 587
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+    },
+});
+
+// API สำหรับการเข้าสู่ระบบ
+app.post('/api/login', async function(req, res) {
+    const { username, password } = req.body;
+    const sql = "SELECT UserId, password, loginAttempt, isActive, lastAttemptTime FROM User WHERE username = ?";
+
+    try {
+        const [users] = await db.promise().query(sql, [username]);
+
+        if (users.length > 0) {
+            const user = users[0];
+            const storedHashedPassword = user.password;
+            const loginAttempt = user.loginAttempt;
+            const isActive = user.isActive;
+            const lastAttemptTime = user.lastAttemptTime;
+
+            // ตรวจสอบสถานะของบัญชีว่าถูกล็อกหรือไม่
+            if (isActive !== 1) {
+                // อัปเดต lastAttemptTime ทุกครั้งที่มีการพยายามเข้าสู่ระบบ
+                await db.promise().query("UPDATE User SET lastAttemptTime = NOW() WHERE UserId = ?", [user.UserId]);
+                return res.send({ "message": "บัญชีนี้ถูกปิดใช้งาน", "status": false });
+            }
+
+            // ตรวจสอบจำนวนครั้งในการพยายามเข้าสู่ระบบในช่วงเวลา 24 ชั่วโมง
+            const now = new Date();
+            const lastAttempt = lastAttemptTime ? new Date(lastAttemptTime) : new Date(0); // ถ้าไม่มีค่า lastAttemptTime ให้ใช้วันที่ 0
+            const diffTime = Math.abs(now - lastAttempt);
+            const diffHours = Math.ceil(diffTime / (1000 * 60 * 60)); // แปลงเป็นชั่วโมง
+
+            if (loginAttempt > 5 && diffHours < 24) {
+                // อัปเดต lastAttemptTime ทุกครั้งที่มีการพยายามเข้าสู่ระบบ
+                await db.promise().query("UPDATE User SET lastAttemptTime = NOW() WHERE UserId = ?", [user.UserId]);
+                return res.send({ 
+                    "message": "บัญชีคุณถูกล็อคเนื่องจากมีการพยายามเข้าสู่ระบบเกินกำหนด", 
+                    "status": false 
+                });
+            }
+
+            // ตรวจสอบรหัสผ่าน
+            const match = await bcrypt.compare(password, storedHashedPassword);
+
+            if (match) {
+                // รีเซ็ตจำนวนครั้งการพยายามเข้าสู่ระบบและ lastAttemptTime
+                const updateSql = "UPDATE User SET loginAttempt = 0, lastAttemptTime = NOW(), isActive = 1 WHERE UserId = ?";
+                const [updateResult] = await db.promise().query(updateSql, [user.UserId]);
+
+                // ตรวจสอบว่ามีการอัปเดตสำเร็จหรือไม่
+                if (updateResult.affectedRows > 0) {
+                    return res.send({ 
+                        "message": "เข้าสู่ระบบสำเร็จ", 
+                        "status": true, 
+                        "userID": user.UserId 
+                    });
+                } else {
+                    return res.send({ "message": "เกิดข้อผิดพลาดในการอัปเดตข้อมูล", "status": false });
+                }
+            } else {
+                // เพิ่มจำนวนครั้งที่พยายามเข้าสู่ระบบและอัปเดต lastAttemptTime
+                const updateSql = "UPDATE User SET loginAttempt = loginAttempt + 1, lastAttemptTime = NOW() WHERE UserId = ?";
+                const [updateResult] = await db.promise().query(updateSql, [user.UserId]);
+
+                // ตรวจสอบว่ามีการอัปเดตสำเร็จหรือไม่
+                if (updateResult.affectedRows > 0) {
+                    if (loginAttempt >= 2) {
+                        return res.send({ 
+                            "message": "บัญชีคุณถูกล็อคเนื่องจากมีการพยายามเข้าสู่ระบบเกินกำหนด", 
+                            "status": false 
+                        });
+                    } else {
+                        return res.send({ "message": "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง", "status": false });
+                    }
+                } else {
+                    return res.send({ "message": "เกิดข้อผิดพลาดในการอัปเดตข้อมูล", "status": false });
+                }
+            }
+        } else {
+            return res.send({ "message": "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง", "status": false });
+        }
+    } catch (err) {
+        console.error('Error during login process:', err);
+        return res.status(500).send({ "message": "เกิดข้อผิดพลาดในการเชื่อมต่อ", "status": false });
+    }
+});
+
+// Logout endpoint
+app.post('/api/logout/:id', async (req, res) => {
+    const { id } = req.params;
+    const updateSql = "UPDATE User SET isActive = 1, loginAttempt = 0 WHERE UserId = ?";
+
+    try {
+        await db.promise().query(updateSql, [id]);
+        res.send({ status: true, message: "Logged out successfully" });
+    } catch (err) {
+        console.error('Error during logout process:', err);
+        res.status(500).send({ message: "Database update error", status: false });
+    }
+});
+
+app.post('/api/checkUsernameEmail', async function(req, res) {
+    const { username, email } = req.body;
+
+    if (!username || !email) {
+        return res.status(400).send({ "message": "กรุณาระบุชื่อผู้ใช้และอีเมล", "status": false });
+    }
+
+    try {
+        const [usernameResult] = await db.promise().query("SELECT username FROM User WHERE username = ?", [username]);
+        const [emailResult] = await db.promise().query("SELECT email FROM User WHERE email = ?", [email]);
+
+        if (usernameResult.length > 0) {
+            return res.status(409).send({ "message": "ชื่อผู้ใช้นี้ถูกใช้งานแล้ว", "status": false });
+        }
+
+        if (emailResult.length > 0) {
+            return res.status(409).send({ "message": "อีเมลนี้ถูกใช้งานแล้ว", "status": false });
+        }
+
+        res.send({ "message": "ชื่อผู้ใช้และอีเมลนี้สามารถใช้ได้", "status": true });
+    } catch (err) {
+        console.error('Database error:', err);
+        res.status(500).send({ "message": "เกิดข้อผิดพลาดในระบบ", "status": false });
+    }
 });
 
 
-/*############## CUSTOMER ##############*/
-//Register
-app.post('/api/register', 
-    function(req, res) {  
-        const { username, password, firstName, lastName } = req.body;
-        
-        //check existing username
-        let sql="SELECT * FROM customer WHERE username=?";
-        db.query(sql, [username], async function(err, results) {
-            if (err) throw err;
-            
-            if(results.length == 0) {
-                //password and salt are encrypted by hash function (bcrypt)
-                const salt = await bcrypt.genSalt(10); //generate salte
-                const password_hash = await bcrypt.hash(password, salt);        
-                                
-                //insert customer data into the database
-                sql = 'INSERT INTO customer (username, password, firstName, lastName) VALUES (?, ?, ?, ?)';
-                db.query(sql, [username, password_hash, firstName, lastName], (err, result) => {
-                    if (err) throw err;
-                
-                    res.send({'message':'ลงทะเบียนสำเร็จแล้ว','status':true});
-                });      
-            }else{
-                res.send({'message':'ชื่อผู้ใช้ซ้ำ','status':false});
-            }
+app.post('/api/register8', upload.single('imageFile'), async function(req, res) {
+    const { email, username, password, firstname, lastname, nickname, gender, height, phonenumber, home, dateOfBirth, educationID, preferences, goalID, interestGenderID } = req.body;
+    const fileName = req.file ? req.file.filename : null;
 
-        });      
+    // ตรวจสอบข้อมูลว่าครบถ้วนหรือไม่
+    if (!email || !username || !password || !firstname || !lastname || !nickname || !gender || !height || !phonenumber || !home || !dateOfBirth || !educationID || !preferences || !goalID || !interestGenderID || !fileName) {
+        console.log("ข้อมูลไม่ครบถ้วน", {
+            email, username, password, firstname, lastname, nickname, gender, height, phonenumber, home, dateOfBirth, educationID, preferences, goalID, interestGenderID, fileName
+        });
+        return res.status(400).send({ "message": "ข้อมูลไม่ครบถ้วน", "status": false });
     }
-);
 
+    try {
+        // ทำการ hash รหัสผ่าน
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-//Login
-app.post('/api/login', async function(req, res) {
-    //Validate username
-    const {username, password} = req.body;
-    let sql = '';
-    let user = {};
-    let isEmployee = false;
-    let positionID = null;
+        // ค้นหา GenderID
+        const [genderResult] = await db.promise().query("SELECT GenderID FROM gender WHERE Gender_Name = ?", [gender]);
 
-    // ตรวจสอบว่าผู้ใช้เป็นลูกค้าหรือพนักงาน
-    sql = "SELECT * FROM customer WHERE username=? AND isActive = 1";
-    let customer = await query(sql, [username]);
-
-    if (customer.length > 0) {
-        // ผู้ใช้เป็นลูกค้า
-        user = customer[0];
-    } else {
-        // ถ้าไม่ใช่ลูกค้า ให้ตรวจสอบในตารางพนักงาน
-        sql = "SELECT * FROM employee WHERE username=? AND isActive = 1";
-        let employee = await query(sql, [username]);
-
-        if (employee.length > 0) {
-            // ผู้ใช้เป็นพนักงาน
-            user = employee[0];
-            isEmployee = true;  // ตั้งค่าว่าเป็นพนักงาน
-            positionID = user['positionID']; // ดึงข้อมูล positionID ของพนักงาน
-        } else {
-            return res.send({'message': 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'status': false});
+        if (genderResult.length === 0) {
+            console.log("ไม่พบข้อมูลเพศที่ระบุ");
+            return res.status(404).send({ "message": "ไม่พบข้อมูลเพศที่ระบุ", "status": false });
         }
-    }
 
-    // ตรวจสอบจำนวนครั้งที่พยายามเข้าสู่ระบบ
-    let loginAttempt = 0;
-    sql = `SELECT loginAttempt FROM ${isEmployee ? 'employee' : 'customer'} WHERE username=? AND isActive = 1 
-           AND lastAttemptTime >= CURRENT_TIMESTAMP - INTERVAL 24 HOUR`;
+        const genderID = genderResult[0].GenderID;
 
-    let row = await query(sql, [username]);
-    if (row.length > 0) {
-        loginAttempt = row[0]['loginAttempt'];
+        // Log ข้อมูลก่อนการบันทึกลง database
+        console.log("Inserting data into User: ", {
+            username, hashedPassword, email, firstname, lastname, nickname, genderID, height, phonenumber, home, dateOfBirth, educationID, goalID, fileName, interestGenderID
+        });
 
-        if (loginAttempt >= 3) {
-            return res.send({'message': 'บัญชีคุณถูกล๊อก เนื่องจากมีการพยายามเข้าสู่ระบบเกินกำหนด', 'status': false});
+        // บันทึกข้อมูลผู้ใช้
+        const sqlInsert = `
+            INSERT INTO User (username, password, email, firstname, lastname, nickname, GenderID, height, phonenumber, home, DateBirth, EducationID, goalID, imageFile, interestGenderID )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        const [insertResult] = await db.promise().query(sqlInsert, [username, hashedPassword, email, firstname, lastname, nickname, genderID, height, phonenumber, home, dateOfBirth, educationID, goalID, fileName, interestGenderID]);
+
+        const userID = insertResult.insertId;
+
+        // บันทึก preferences
+        const preferenceIDs = preferences.split(',').map(id => parseInt(id));
+        for (const preferenceID of preferenceIDs) {
+            await db.promise().query("INSERT INTO userpreferences (UserID, PreferenceID) VALUES (?, ?)", [userID, preferenceID]);
         }
-    } else {
-        // reset login attempt
-        sql = `UPDATE ${isEmployee ? 'employee' : 'customer'} SET loginAttempt = 0, lastAttemptTime=NULL WHERE username=? AND isActive = 1`;
-        await query(sql, [username]);
+
+        console.log(`Preferences saved for user ${userID}: `, preferenceIDs);
+
+        res.send({ "message": "ลงทะเบียนสำเร็จ", "status": true });
+    } catch (err) {
+        console.error('Database error:', err);
+        res.status(500).send({ "message": "บันทึกลง FinLove ล้มเหลว", "status": false });
     }
+});
 
-    // ตรวจสอบรหัสผ่าน
-    if (bcrypt.compareSync(password, user['password'])) {
-        // reset login attempt
-        sql = `UPDATE ${isEmployee ? 'employee' : 'customer'} SET loginAttempt = 0, lastAttemptTime=NULL WHERE username=? AND isActive = 1`;
-        await query(sql, [username]);
+app.post('/api/request-pin', async (req, res) => {
+    const { email } = req.body;
 
-        // สร้าง token และส่งกลับ
-        let tokenPayload = {
-            userID: isEmployee ? user['empID'] : user['custID'],
-            username: username,
-            role: isEmployee ? 'employee' : 'customer'
+    try {
+        // ดึง userID จาก email
+        const [result] = await db.promise().query("SELECT userID FROM User WHERE email = ?", [email]);
+
+        if (result.length === 0) {
+            return res.status(400).send({ message: "ไม่พบอีเมลนี้ในระบบ", status: false });
+        }
+
+        const userId = result[0].userID;  // ดึง userID เพื่ออัพเดต PIN
+        const pinCode = Math.floor(1000 + Math.random() * 9000).toString(); // PIN 4 หลัก
+        const expirationDate = new Date(Date.now() + 3600000); // PIN หมดอายุใน 1 ชั่วโมง
+
+        // อัพเดต pinCode และ pinCodeExpiration โดยใช้ userID
+        const updateResult = await db.promise().query(
+            "UPDATE User SET pinCode = ?, pinCodeExpiration = ? WHERE userID = ?",
+            [pinCode, expirationDate, userId]
+        );
+
+        // ตรวจสอบการอัพเดต
+        if (updateResult[0].affectedRows === 0) {
+            return res.status(500).send({ message: "ไม่สามารถอัพเดต PIN ได้", status: false });
+        }
+
+        // ส่ง PIN ไปยังอีเมลผู้ใช้
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'รหัส PIN สำหรับรีเซ็ตรหัสผ่าน',
+            text: `รหัส PIN ของคุณคือ: ${pinCode}. รหัสนี้จะหมดอายุใน 1 ชั่วโมง.`
         };
 
-        if (isEmployee) {
-            tokenPayload['positionID'] = positionID; // ถ้าเป็นพนักงาน ให้เพิ่ม positionID
-        }
+        await transporter.sendMail(mailOptions);
 
-        const token = jwt.sign(tokenPayload, SECRET_KEY, { expiresIn: '1h' });
-
-        user['token'] = token;
-        user['message'] = 'เข้าสู่ระบบสำเร็จ';
-        user['status'] = true;
-
-        // เพิ่มข้อมูล role และ positionID ลงใน response
-        user['role'] = isEmployee ? (positionID == 1 ? 'admin' : 'employee') : 'customer';
-
-        res.send(user);
-    } else {
-        // update login attempt
-        const lastAttemptTime = new Date();
-        sql = `UPDATE ${isEmployee ? 'employee' : 'customer'} SET loginAttempt = loginAttempt + 1, lastAttemptTime=? WHERE username=? AND isActive = 1`;
-        await query(sql, [lastAttemptTime, username]);
-
-        if (loginAttempt >= 2) {
-            res.send({'message': 'บัญชีคุณถูกล๊อก เนื่องจากมีการพยายามเข้าสู่ระบบเกินกำหนด', 'status': false});
-        } else {
-            res.send({'message': 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง', 'status': false});
-        }
+        res.send("PIN ถูกส่งไปยังอีเมลของคุณ");
+    } catch (err) {
+        console.error('Error sending PIN:', err);
+        res.status(500).send({ message: "เกิดข้อผิดพลาดในการส่ง PIN", status: false });
     }
 });
 
 
-//Function to execute a query with a promise-based approach
-function query(sql, params) {
-    return new Promise((resolve, reject) => {
-      db.query(sql, params, (err, results) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(results);
-        }
-      });
-    });
-}
+app.post('/api/verify-pin', async (req, res) => {
+    const { email, pin } = req.body;
 
-//List customers
-app.get('/api/customer',
-    function(req, res){             
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(decode.positionID != 1 && decode.positionID != 2) {
-              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-            
-            let sql = "SELECT * FROM customer";            
-            db.query(sql, function (err, result){
-                if (err) throw err;            
-                res.send(result);
-            });      
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-
-
-//Show a customer Profile
-app.get('/api/profile/:id',
-    async function(req, res){
-        const custID = req.params.id;        
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(custID != decode.custID && decode.positionID != 1 && decode.positionID != 2) {
-              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-            
-            let sql = "SELECT * FROM customer WHERE custID = ? AND isActive = 1";        
-            let customer = await query(sql, [custID]);        
-            
-            customer = customer[0];
-            customer['message'] = 'success';
-            customer['status'] = true;
-            res.send(customer); 
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-
-//Show a customer image
-app.get('/api/customer/image/:filename', 
-    function(req, res) {        
-        const filepath = path.join(__dirname, 'assets/customer', req.params.filename);        
-        res.sendFile(filepath);
-    }
-);
-
-//Update a customer
-app.put('/api/customer/:id', 
-    async function(req, res){
-  
-        //receive a token
-        const token = req.headers["authorization"].replace("Bearer ", "");
-        const custID = req.params.id;
-    
-        try{
-            //validate the token    
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(custID != decode.custID && decode.positionID != 1 && decode.positionID != 2) {
-                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-        
-            //save file into folder  
-            let fileName = "";
-            if (req?.files?.imageFile){        
-                const imageFile = req.files.imageFile; // image file    
-                
-                fileName = imageFile.name.split(".");// file name
-                fileName = fileName[0] + Date.now() + '.' + fileName[1]; 
-        
-                const imagePath = path.join(__dirname, 'assets/customer', fileName); //image path
-        
-                fs.writeFile(imagePath, imageFile.data, (err) => {
-                if(err) throw err;
-                });
-                
-            }
-    
-        
-            //save data into database
-            const {password, username, firstName, lastName, email, gender } = req.body;
-        
-            let sql = 'UPDATE customer SET username = ?,firstName = ?, lastName = ?, email = ?, gender = ?';
-            let params = [username, firstName, lastName, email, gender];
-        
-            if (password) {
-                const salt = await bcrypt.genSalt(10);
-                const password_hash = await bcrypt.hash(password, salt);   
-                sql += ', password = ?';
-                params.push(password_hash);
-            }
-        
-            if (fileName != "") {    
-                sql += ', imageFile = ?';
-                params.push(fileName);
-            }
-        
-            sql += ' WHERE custID = ?';
-            params.push(custID);
-        
-            db.query(sql, params, (err, result) => {
-                if (err) throw err;
-                res.send({ 'message': 'แก้ไขข้อมูลลูกค้าเรียบร้อยแล้ว', 'status': true });
-            });
-            
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }    
-    }
-);
-    
-//Delete a customer
-app.delete('/api/customer/:id',
-    async function(req, res){
-        const custID = req.params.id;        
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(custID != decode.custID && decode.positionID != 1 && decode.positionID != 2) {
-                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-            
-            const sql = `DELETE FROM customer WHERE custID = ?`;
-            db.query(sql, [custID], (err, result) => {
-                if (err) throw err;
-                res.send({'message':'ลบข้อมูลลูกค้าเรียบร้อยแล้ว','status':true});
-            });
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-
-
-
-//List employees
-app.get('/api/employee',
-    function(req, res){             
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(decode.positionID != 1) {
-              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-            
-            let sql = "SELECT * FROM employee";            
-            db.query(sql, function (err, result){
-                if (err) throw err;            
-                res.send(result);
-            });      
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-
-//Show an employee detail
-app.get('/api/employee/:id',
-    async function(req, res){
-        const empID = req.params.id;        
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(empID != decode.empID && decode.positionID != 1) {
-              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-            
-            let sql = "SELECT * FROM employee WHERE empID = ? AND isActive = 1";        
-            let employee = await query(sql, [empID]);        
-            
-            employee = employee[0];
-            employee['message'] = 'success';
-            employee['status'] = true;
-            res.send(employee); 
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-
-//Show an employee image
-app.get('/api/employee/image/:filename', 
-    function(req, res) {
-        const filepath = path.join(__dirname, 'assets/employee', req.params.filename);  
-        res.sendFile(filepath);
-    }
-);
-
-//Generate a password
-function generateRandomPassword(length) {
-    return crypto
-        .randomBytes(length)
-        .toString('base64')
-        .slice(0, length)
-        .replace(/\+/g, 'A')  // Replace '+' to avoid special chars if needed
-        .replace(/\//g, 'B'); // Replace '/' to avoid special chars if needed
-}
-
-
-//Add an employee
-app.post('/api/employee', 
-    async function(req, res){
-  
-        //receive a token
-        const token = req.headers["authorization"].replace("Bearer ", "");        
-    
-        try{
-            //validate the token    
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(decode.positionID != 1) {
-                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }            
-
-            //receive data from users
-            const {username, firstName, lastName, email, gender } = req.body;
-
-            //check existing username
-            let sql="SELECT * FROM employee WHERE username=?";
-            db.query(sql, [username], async function(err, results) {
-                if (err) throw err;
-                
-                if(results.length == 0) {
-                    //password and salt are encrypted by hash function (bcrypt)
-                    const password = generateRandomPassword(8);
-                    const salt = await bcrypt.genSalt(10); //generate salte
-                    const password_hash = await bcrypt.hash(password, salt);    
-                    
-                    //save data into database                
-                    let sql = `INSERT INTO employee(
-                            username, password, firstName, lastName, email, gender
-                            )VALUES(?, ?, ?, ?, ?, ?)`;   
-                    let params = [username, password_hash, firstName, lastName, email, gender];
-                
-                    db.query(sql, params, (err, result) => {
-                        if (err) throw err;
-                        res.send({ 'message': 'เพิ่มข้อมูลพนักงานเรียบร้อยแล้ว', 'status': true });
-                    });                    
-
-                }else{
-                    res.send({'message':'ชื่อผู้ใช้ซ้ำ','status':false});
-                }
-            });                        
-            
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }    
-    }
-);
-    
-//Update an employee
-app.put('/api/employee/:id', 
-    async function(req, res){
-  
-        //receive a token
-        const token = req.headers["authorization"].replace("Bearer ", "");
-        const empID = req.params.id;
-    
-        try{
-            //validate the token    
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(empID != decode.empID && decode.positionID != 1) {
-                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-        
-            //save file into folder  
-            let fileName = "";
-            if (req?.files?.imageFile){        
-                const imageFile = req.files.imageFile; // image file    
-                
-                fileName = imageFile.name.split(".");// file name
-                fileName = fileName[0] + Date.now() + '.' + fileName[1]; 
-        
-                const imagePath = path.join(__dirname, 'assets/employee', fileName); //image path
-        
-                fs.writeFile(imagePath, imageFile.data, (err) => {
-                if(err) throw err;
-                });
-                
-            }
-            
-            //save data into database
-            const {password, username, firstName, lastName, email, gender } = req.body;
-        
-            let sql = 'UPDATE employee SET username = ?,firstName = ?, lastName = ?, email = ?, gender = ?';
-            let params = [username, firstName, lastName, email, gender];
-        
-            if (password) {
-                const salt = await bcrypt.genSalt(10);
-                const password_hash = await bcrypt.hash(password, salt);   
-                sql += ', password = ?';
-                params.push(password_hash);
-            }
-        
-            if (fileName != "") {    
-                sql += ', imageFile = ?';
-                params.push(fileName);
-            }
-        
-            sql += ' WHERE empID = ?';
-            params.push(empID);
-        
-            db.query(sql, params, (err, result) => {
-                if (err) throw err;
-                res.send({ 'message': 'แก้ไขข้อมูลพนักงานเรียบร้อยแล้ว', 'status': true });
-            });
-            
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }    
-    }
-);
-    
-//Delete an employee
-app.delete('/api/employee/:id',
-    async function(req, res){
-        const empID = req.params.id;        
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(decode.positionID != 1) {
-                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-            
-            const sql = `DELETE FROM employee WHERE empID = ?`;
-            db.query(sql, [empID], (err, result) => {
-                if (err) throw err;
-                res.send({'message':'ลบข้อมูลพนักงานเรียบร้อยแล้ว','status':true});
-            });
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-
-
-
-/*############## PRODUCT ##############*/
-//List products
-app.get('/api/product',
-    function(req, res){        
-        const sql = "SELECT * FROM product";
-        db.query(sql, 
-            function(err, result) {
-                if (err) throw err;
-                
-                if(result.length > 0){
-                    res.send(result);
-                }else{
-                    res.send( {'message':'fail','status':false} );
-                }
-                
-            }                       
+    try {
+        // ตรวจสอบว่าอีเมลและ PIN ถูกต้อง
+        const [result] = await db.promise().query(
+            "SELECT userID, pinCode, pinCodeExpiration FROM User WHERE email = ? AND pinCode = ?",
+            [email, pin]
         );
-    }
-);
 
-//Show a product detail
-app.get('/api/product/:id', 
-    function (req, res){
-        const sql = 'SELECT * FROM product WHERE productID = ?';
-        db.query(sql, [req.params.id], (err, result) => {
-            if (err) throw err;
-
-            if(result.length > 0) {
-                product = result[0];
-                product['message'] = 'success';
-                product['status'] = true;
-                res.json(product);
-            }else{
-                res.send({'message':'ไม่พบข้อมูลสินค้า','status':false});
-            }
-        });
-    }
-);
-
-//Show a product image
-app.get('/api/product/image/:filename', 
-    function(req, res){
-      const filepath = path.join(__dirname, 'assets/product', req.params.filename);  
-      res.sendFile(filepath);
-    }
-);
-
-
-//Add a product
-app.post('/api/product', 
-    async function(req, res){
-  
-        //receive a token
-        const token = req.headers["authorization"].replace("Bearer ", "");        
-    
-        try{
-            //validate the token    
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(decode.positionID != 1 && decode.positionID != 2) {
-                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-        
-            //save file into folder  
-            let fileName = "";
-            const imageFile = req.files.imageFile; // image file    
-            
-            fileName = imageFile.name.split(".");// file name
-            fileName = fileName[0] + Date.now() + '.' + fileName[1]; 
-    
-            const imagePath = path.join(__dirname, 'assets/product', fileName); //image path
-    
-            fs.writeFile(imagePath, imageFile.data, (err) => {
-            if(err) throw err;
-            });
-            
-            //save data into database
-            const {productName, productDetail, price, cost, quantity, typeID} = req.body;
-        
-            let sql = `INSERT INTO product(
-                       productName, productDetail, price, cost, quantity, imageFile, typeID
-                       )VALUES(?, ?, ?, ?, ?, ?, ?)`;                
-            let params = [productName, productDetail, price, cost, quantity, fileName, typeID];            
-        
-            db.query(sql, params, (err, result) => {
-                if (err) throw err;
-                res.send({ 'message': 'เพิ่มข้อมูลสินค้าเรียบร้อยแล้ว', 'status': true });
-            });
-            
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }    
-    }
-);
-    
-//Update a product
-app.put('/api/product/:id', 
-    async function(req, res){
-  
-        //Receive a token
-        const token = req.headers["authorization"].replace("Bearer ", "");
-        const productID = req.params.id;
-    
-        try{
-            //validate the token    
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(decode.positionID != 1 && decode.positionID != 2) {
-                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-        
-            //save file into folder  
-            let fileName = "";
-            if (req?.files?.imageFile){        
-                const imageFile = req.files.imageFile; // image file    
-                
-                fileName = imageFile.name.split(".");// file name
-                fileName = fileName[0] + Date.now() + '.' + fileName[1]; 
-        
-                const imagePath = path.join(__dirname, 'assets/product', fileName); //image path
-        
-                fs.writeFile(imagePath, imageFile.data, (err) => {
-                if(err) throw err;
-                });
-                
-            }
-            
-            //save data into database
-            const {productName, productDetail, price, cost, quantity, typeID} = req.body;
-        
-            let sql = `UPDATE product SET 
-                       productName = ?, productDetail = ?, price = ?, cost = ?, quantity = ?, typeID = ?`;
-            let params = [productName, productDetail, price, cost, quantity, typeID];
-        
-            if (fileName != "") {    
-                sql += ', imageFile = ?';
-                params.push(fileName);
-            }
-        
-            sql += ' WHERE productID = ?';
-            params.push(productID);
-        
-            db.query(sql, params, (err, result) => {
-                if (err) throw err;
-                res.send({ 'message': 'แก้ไขข้อมูลสินค้าเรียบร้อยแล้ว', 'status': true });
-            });
-            
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }    
-    }
-);
-    
-//Delete a product
-app.delete('/api/product/:id',
-    async function(req, res){
-        const productID = req.params.id;        
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(decode.positionID != 1 && decode.positionID != 2) {
-                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-            
-            const sql = 'DELETE FROM product WHERE productID = ?';
-            db.query(sql, [productID], (err, result) => {
-                if (err) throw err;
-                res.send({'message':'ลบข้อมูลสินค้าเรียบร้อยแล้ว','status':true});
-            });
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-
-
-/*############## ORDER ##############*/
-//เพิ่มสินค้าเข้าตะกร้า
-app.post('/api/makeorder', (req, res) => {  
-    const { custID, productID, quantity, price } = req.body;    
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+        if (result.length === 0) {
+            return res.status(400).send({ message: "PIN ไม่ถูกต้อง", status: false });
         }
 
-    
-        //Select last order having status id as 0
-        let sql = 'SELECT orderID FROM orders WHERE custID = ? AND statusID = 0';
-        db.query(sql, [custID], (err, results) => {
-            if (err) throw err;
-            let orderID = '';
-            
-            if(results.length == 0) {
-                //Insert an order      
-                sql = 'INSERT INTO orders (custID,statusID)VALUES(?, 0)';
-                db.query(sql, [custID], (err, result) => {
-                if (err) throw err;    
-                orderID = result.insertId;
-        
-                //Insert an order detail
-                sql = 'INSERT INTO orderdetail VALUES(?, ?, ?, ?)';
-                db.query(sql, [orderID, productID, quantity, price ], (err, result) => {
-                    if (err) throw err;
-                });
-        
-                });
-                
-        
-            }else{
-                orderID = results[0]['orderID'];
-                sql = 'SELECT COUNT(*) AS orderdetailcount ';
-                sql += 'FROM orderdetail ';
-                sql += 'WHERE orderID = ? AND productID = ?';
-                db.query(sql, [orderID, productID], (err, result) => {
-                if (err) throw err;
-        
-                if(result[0]['orderdetailcount'] == 0)//no-existing order detail
-                {
-                    //Insert an order detail
-                    sql = 'INSERT INTO orderdetail VALUES(?, ?, ?, ?)';
-                    db.query(sql, [orderID, productID, quantity, price ], (err, result) => {
-                        if (err) throw err;
-                    });
-        
-                }else{
-                    //Update an order detail
-                    sql = 'UPDATE orderdetail ';
-                    sql += 'SET quantity = quantity + ? ';
-                    sql += 'WHERE orderID = ? AND productID = ?';            
-                    db.query(sql, [quantity, orderID, productID], (err, result) => {
-                        if (err) throw err;
-                    });
-                }
-                
-                });
-            }
-    
-            res.send({'message':'success','status':true});
-        });
+        const user = result[0];
+        const currentTime = new Date();
 
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }    
+        // ตรวจสอบว่า PIN หมดอายุหรือไม่
+        if (currentTime > user.pinCodeExpiration) {
+            return res.status(400).send({ message: "PIN หมดอายุ", status: false });
+        }
+
+        // ถ้า PIN ถูกต้องและยังไม่หมดอายุ
+        res.send({ message: "PIN ถูกต้อง", status: true });
+    } catch (err) {
+        console.error("Error verifying PIN:", err);
+        res.status(500).send({ message: "เกิดข้อผิดพลาดในการยืนยัน PIN", status: false });
+    }
 });
 
-function getCurrentTime(){
-    const currentDate = new Date();
-    const year = currentDate.getFullYear();
-    const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-    const day = String(currentDate.getDate()).padStart(2, '0');
-    const hours = String(currentDate.getHours()).padStart(2, '0');
-    const minutes = String(currentDate.getMinutes()).padStart(2, '0');
-    const seconds = String(currentDate.getSeconds()).padStart(2, '0');
+app.post('/api/reset-password', async (req, res) => {
+    const { email, pin, newPassword } = req.body;
 
-    const formattedDateTime = year+'-'+month+'-'+day+' '+hours+':'+minutes+':'+seconds;;
-    return formattedDateTime;
-}
-
-//ยืนยันการสั่งซื้อ
-app.post('/api/confirmorder',
-    async function(req, res){
-        const { custID, orderID} = req.body; 
-        const orderDate = getCurrentTime();
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(custID != decode.custID) {
-              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-
-            let sql = `
-            UPDATE orders
-            SET orderDate = ?, statusID = 1
-            WHERE orderID = ?`
-            db.query(sql, [orderDate, orderID], (err, result) => {
-                if (err) throw err;
-                res.send({'message':'ยืนยันการสั่งซื้อเรียบร้อย','status':true});
-            });
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-
-
-//ยืนยันการชำระเงิน
-app.post('/api/confirmpayment',
-    async function(req, res){
-        const {orderID, statusID} = req.body;
-        const token = req.headers["authorization"].replace("Bearer ", "");
-            
-        try{
-            let decode = jwt.verify(token, SECRET_KEY);               
-            if(decode.positionID != 1 && decode.positionID != 2) {
-              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-            }
-            
-            //statusID=3 is confirming order
-            let sql = `
-            UPDATE orders
-            SET statusID = ?
-            WHERE orderID = ?`
-            db.query(sql, [statusID, orderID], (err, result) => {
-                if (err) throw err;
-                res.send({'message':'ยืนยันการชำระเงินเรียบร้อย','status':true});
-            });
-
-        }catch(error){
-            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-        }
-        
-    }
-);
-  
-  
-//แสดงข้อมูลการสั่งซื้อที่อยู่ในตะกร้า
-app.get('/api/cart/:id', (req, res) => {
-    const custID = req.params.id;
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }
-
-        let sql = `
-        SELECT orders.orderID, orderDate, shipDate, receiveDate, orders.custID, statusID,
-            customer.firstName,customer.lastName,customer.address,customer.mobilePhone,
-            SUM(orderdetail.quantity) AS totalQuantity,
-            SUM(orderdetail.quantity*orderdetail.price) AS totalPrice,
-            COUNT(orderdetail.orderID) AS itemCount
-        FROM orders
-            INNER JOIN customer ON customer.custID=orders.custID
-            INNER JOIN orderdetail ON orders.orderID=orderdetail.orderID
-        WHERE orders.custID=?  AND orders.statusID=0
-        GROUP BY orders.orderID, orderDate, shipDate,
-            receiveDate, orders.custID, statusID,
-            customer.firstName,customer.lastName,customer.address,customer.mobilePhone`;
-    
-        db.query(sql, [custID], (err, results) => {
-            if (err) throw err;
-            res.json(results);
-        });
-
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+    // ตรวจสอบว่าข้อมูลครบถ้วนหรือไม่
+    if (!email || !pin || !newPassword) {
+        return res.status(400).send({ message: "ข้อมูลไม่ครบถ้วน", status: false });
     }
 
-}); 
-  
-//แสดงรายการประวัติการสั่งซื้อ
-app.get('/api/history/:id', (req, res) => {
+    console.log("Received Data:", req.body); // Log ข้อมูลที่ได้รับจากแอป Android
 
-    const custID = req.params.id;
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+    try {
+        // ตรวจสอบ PIN และวันหมดอายุ
+        const [result] = await db.promise().query(
+            "SELECT userID, pinCode, pinCodeExpiration FROM User WHERE email = ? AND pinCode = ? AND pinCodeExpiration > ?",
+            [email, pin, new Date()]
+        );
+
+        if (result.length === 0) {
+            return res.status(400).send({ message: "PIN ไม่ถูกต้องหรือหมดอายุ", status: false });
         }
 
-        let sql = 'SELECT orders.orderID, orderDate, shipDate, receiveDate, orders.custID, statusID,';
-        sql += 'customer.firstName,customer.lastName,';
-        sql += 'SUM(orderdetail.quantity) AS totalQuantity,';
-        sql += 'SUM(orderdetail.quantity*orderdetail.price) AS totalPrice ';
-        sql += 'FROM orders ';
-        sql += '    INNER JOIN customer ON customer.custID=orders.custID ';         
-        sql += '    INNER JOIN orderdetail ON orders.orderID=orderdetail.orderID ';
-        sql += 'WHERE orders.custID=?  AND orders.statusID<>0 ';
-        sql += 'GROUP BY orders.orderID, orderDate, shipDate,';
-        sql += '    receiveDate, orders.custID, statusID,';
-        sql += '    customer.firstName,customer.lastName ';
-        sql += 'ORDER BY orders.orderID DESC';
+        const userId = result[0].userID;
 
-        db.query(sql, [custID], (err, results) => {
-            if (err) throw err;
-            res.json(results);
-        });
+        // เข้ารหัสรหัสผ่านใหม่
+        const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }    
+        // อัปเดตรหัสผ่านใหม่ในฟิลด์ password และลบข้อมูล PIN ออก
+        const updateResult = await db.promise().query(
+            "UPDATE User SET password = ?, pinCode = NULL, pinCodeExpiration = NULL WHERE userID = ?",
+            [hashedPassword, userId]
+        );
 
-}); 
-  
-//แสดงข้อมูลการสั่งซื้อ ของรายการที่เลือก
-app.get('/api/orderinfo/:custID/:orderID', (req, res) => {
-    const custID = req.params.custID;
-    const orderID = req.params.orderID;
-
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+        if (updateResult[0].affectedRows === 0) {
+            return res.status(400).send({ message: "ไม่สามารถอัปเดตรหัสผ่านได้", status: false });
         }
 
-        let sql = 'SELECT orders.orderID, orderDate, shipDate, receiveDate, orders.custID, statusID,';
-        sql += 'customer.firstName,customer.lastName,customer.address,customer.mobilePhone,';
-        sql += 'SUM(orderdetail.quantity) AS totalQuantity,';
-        sql += 'SUM(orderdetail.quantity*orderdetail.price) AS totalPrice ';
-        sql += 'FROM orders ';
-        sql += '    INNER JOIN customer ON customer.custID=orders.custID ';         
-        sql += '    INNER JOIN orderdetail ON orders.orderID=orderdetail.orderID ';
-        sql += 'WHERE orders.orderID=? ';
-        sql += 'GROUP BY orders.orderID, orderDate, shipDate,';
-        sql += '    receiveDate, orders.custID, statusID,';
-        sql += '    customer.firstName,customer.lastName,customer.address,customer.mobilePhone ';
-    
-        db.query(sql, [orderID], (err, results) => {
-            if (err) throw err;
-            res.json(results);
-        });
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }        
-
-}); 
-  
-//แสดงรายละเอียดการสั่งซื้อ
-app.get('/api/orderdetail/:custID/:orderID', (req, res) => {
-    const custID = req.params.custID;
-    const orderID = req.params.orderID;
-
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }
-
-        let sql = 'SELECT orderdetail.*,product.productName ';
-        sql += 'FROM orderdetail ';
-        sql += '    INNER JOIN product ON orderdetail.productID = product.productID ';         
-        sql += 'WHERE orderID=? ';
-
-        db.query(sql, [orderID], (err, results) => {
-            if (err) throw err;
-            res.json(results);
-        });
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }      
-}); 
-  
-
-//แสดงข้อมูลการสั่งซื้อ ของรายการที่เลือก (admin)
-app.get('/api/orderinfo/:orderID', async (req, res) => {    
-    const orderID = req.params.orderID;
-
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);               
-        if(decode.positionID != 1 && decode.positionID != 2) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }
-
-        //order info
-        let sql = `
-        SELECT 
-            orders.orderID, 
-            DATE_FORMAT(orderDate, '%Y-%m-%d %H:%i:%s') AS orderDate,
-            DATE_FORMAT(shipDate, '%Y-%m-%d %H:%i:%s') AS shipDate,
-            DATE_FORMAT(receiveDate, '%Y-%m-%d %H:%i:%s') AS receiveDate, 
-            orders.custID, statusID,
-            customer.firstName,customer.lastName,customer.address,customer.mobilePhone,
-            SUM(orderdetail.quantity) AS totalQuantity,
-            SUM(orderdetail.quantity*orderdetail.price) AS totalPrice
-        FROM orders
-            INNER JOIN customer ON customer.custID=orders.custID
-            INNER JOIN orderdetail ON orders.orderID=orderdetail.orderID
-        WHERE orders.orderID=?
-        GROUP BY orders.orderID, orderDate, shipDate,
-            receiveDate, orders.custID, statusID,
-        customer.firstName,customer.lastName,customer.address,customer.mobilePhone`;
-    
-        let orderInfo = await query(sql, [orderID]);
-
-        //order details
-        sql = 'SELECT orderdetail.*,product.productName ';
-        sql += 'FROM orderdetail ';
-        sql += '    INNER JOIN product ON orderdetail.productID = product.productID ';         
-        sql += 'WHERE orderID=? ';
-
-        let orderDetails = await query(sql, [orderID]);
-        orderInfo[0]['orderDetails'] = orderDetails;
-        res.json(orderInfo);
-
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }        
-
-}); 
-
-//แสดงรายการประวัติการสั่งซื้อ (admin)
-app.get('/api/admin/history', (req, res) => {
-
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);  
-        if(decode.positionID != 1 && decode.positionID != 2) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }
-
-        let sql = `
-        SELECT orders.orderID, orders.custID, 
-            DATE_FORMAT(orderDate, '%Y-%m-%d %H:%i:%s') AS orderDate,
-            DATE_FORMAT(shipDate, '%Y-%m-%d %H:%i:%s') AS shipDate,
-            DATE_FORMAT(receiveDate, '%Y-%m-%d %H:%i:%s') AS receiveDate,        
-            CASE 
-                WHEN orders.statusID = 1 THEN 'รอการชำระเงิน'
-                WHEN orders.statusID = 2 THEN 'กำลังตรวจสอบการชำระ'
-                WHEN orders.statusID = 3 THEN 'ชำระแล้ว'
-                WHEN orders.statusID = 4 THEN 'กำลังส่งสินค้า'
-                WHEN orders.statusID = 5 THEN 'ส่งสินค้าแล้ว'
-                ELSE 'ไม่ทราบสถานะ'
-            END AS status,
-            customer.firstName,customer.lastName,
-            SUM(orderdetail.quantity) AS totalQuantity,
-            SUM(orderdetail.quantity*orderdetail.price) AS totalPrice
-        FROM orders
-            INNER JOIN customer ON customer.custID=orders.custID
-            INNER JOIN orderdetail ON orders.orderID=orderdetail.orderID
-        WHERE orders.statusID<>0
-        GROUP BY orders.orderID, orderDate, shipDate,
-            receiveDate, orders.custID, status,
-            customer.firstName,customer.lastName
-        ORDER BY orders.orderID DESC`;
-
-        db.query(sql, (err, results) => {
-            if (err) throw err;
-            res.json(results);
-        });
-
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }    
-
-}); 
-
-
-/*############## PAYMENT ##############*/
-//Add a payment
-app.post('/api/payment', (req, res) => {  
-    const { custID, orderID, price} = req.body;  
-    const token = req.headers["authorization"].replace("Bearer ", "");
-
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }
-
-        //save slip file
-        let fileName = "";
-        if (req?.files?.slipFile){
-            const imageFile = req.files.slipFile; // image file    
-
-            fileName = imageFile.name.split(".");// file name
-            fileName = fileName[0] + Date.now() + '.' + fileName[1]; 
-
-            const imagePath = path.join(__dirname, 'assets/payment', fileName); //image path
-
-            fs.writeFile(imagePath, imageFile.data, (err) => {
-                if(err) throw err;
-            });
-        
-        }
-
-        //insert payment data    
-        const sql = 'INSERT INTO payment(orderID, price, slipFile) VALUES (?, ?, ?)';
-        db.query(sql, [orderID, price, fileName], (err, result) => {
-            if (err) throw err;
-        });
-
-        //update customer status
-        const sql_customer = 'UPDATE orders SET statusID = 2 WHERE orderID = ?';
-        db.query(sql_customer, [orderID], (err, result) => {
-            if (err) throw err;
-            res.send({ 'message': 'success', 'status': true });
-        });  
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    } 
-
+        res.send({ message: "รีเซ็ตรหัสผ่านเรียบร้อยแล้ว", status: true });
+    } catch (err) {
+        console.error('Error resetting password:', err);
+        res.status(500).send({ message: "เกิดข้อผิดพลาดในการรีเซ็ตรหัสผ่าน", status: false });
+    }
 });
 
-//Show a slip image
-app.get('/api/payment/image/:filename', (req, res) => {
-    const filepath = path.join(__dirname, 'assets/payment', req.params.filename);  
+
+// แสดงข้อมูลผู้ใช้ทั้งหมด
+app.get('/api/user', function(req, res){        
+    const sql = "SELECT username, imageFile, preferences FROM user";
+    db.query(sql, function(err, result) {
+        if (err) throw err;
+        
+        if(result.length > 0){
+            res.send(result);
+        }else{
+            res.send( {'message':'ไม่พบข้อมูลผู้ใช้','status':false} );
+        }        
+    });
+});
+
+// แสดงรูปภาพของผู้ใช้
+app.get('/api/user/image/:filename', function(req, res){
+    const filepath = path.join(__dirname, 'assets/user', req.params.filename);  // แก้จาก 'uploads' เป็น 'assets/user'
     res.sendFile(filepath);
 });
 
 
-//Show a payment (admin)
-app.get('/api/payment/:id', async (req, res) => {    
-    const orderID = req.params.id;
 
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        let decode = jwt.verify(token, SECRET_KEY);               
-        if(decode.custID > 0 && decode.positionID != 1 && decode.positionID != 2) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+
+
+
+// เรียกดูข้อมูลผู้ใช้
+app.get('/api/user/:id', async function (req, res) {
+    const { id } = req.params;
+    const sql = `
+    SELECT 
+        u.username, u.email, u.firstname, u.lastname, u.nickname, 
+        g.Gender_Name AS gender, ig.interestGenderName AS interestGender, u.height, u.home, u.DateBirth, 
+        u.imageFile,
+        e.EducationName AS education,
+        go.goalName AS goal,
+        COALESCE(GROUP_CONCAT(DISTINCT p.PreferenceNames), 'ไม่มีความชอบ') AS preferences
+    FROM user u
+    LEFT JOIN gender g ON u.GenderID = g.GenderID
+    LEFT JOIN interestgender ig ON u.InterestGenderID = ig.interestGenderID
+    LEFT JOIN education e ON u.educationID = e.educationID
+    LEFT JOIN goal go ON u.goalID = go.goalID
+    LEFT JOIN userpreferences up ON u.UserID = up.UserID
+    LEFT JOIN preferences p ON up.PreferenceID = p.PreferenceID
+    WHERE u.UserID = ?
+    GROUP BY u.UserID
+    `;
+
+    try {
+        const [result] = await db.promise().query(sql, [id]);
+        if (result.length > 0) {
+            if (result[0].imageFile) {
+                result[0].imageFile = `${req.protocol}://${req.get('host')}/uploads/${result[0].imageFile}`;
+            }
+            res.send(result[0]);
+        } else {
+            res.status(404).send({ message: "ไม่พบข้อมูลผู้ใช้", status: false });
         }
-        
-        //order info
-        let sql = `
-        SELECT 
-            orders.orderID, 
-            DATE_FORMAT(orderDate, '%Y-%m-%d %H:%i:%s') AS orderDate,
-            DATE_FORMAT(shipDate, '%Y-%m-%d %H:%i:%s') AS shipDate,
-            DATE_FORMAT(receiveDate, '%Y-%m-%d %H:%i:%s') AS receiveDate, 
-            orders.custID, statusID,
-            customer.firstName,customer.lastName,customer.address,customer.mobilePhone,
-            SUM(orderdetail.quantity) AS totalQuantity,
-            SUM(orderdetail.quantity*orderdetail.price) AS totalPrice
-        FROM orders
-            INNER JOIN customer ON customer.custID=orders.custID
-            INNER JOIN orderdetail ON orders.orderID=orderdetail.orderID
-        WHERE orders.orderID=?
-        GROUP BY orders.orderID, orderDate, shipDate,
-            receiveDate, orders.custID, statusID,
-        customer.firstName,customer.lastName,customer.address,customer.mobilePhone`;
-    
-        let orderInfo = await query(sql, [orderID]);
+    } catch (err) {
+        console.error('Database query error:', err);
+        res.status(500).send({ message: "เกิดข้อผิดพลาดในการดึงข้อมูลผู้ใช้", status: false });
+    }
+});
 
-        //payment details
-        sql = `
-        SELECT 
-            paymentID, orderID,
-            DATE_FORMAT(paymentDate, '%Y-%m-%d %H:%i:%s') AS paymentDate,
-            price, comment, slipFile, channelID 
-        FROM payment 
-        WHERE orderID=?`
 
-        let paymentDetails = await query(sql, [orderID]);
-        orderInfo[0]['paymentDetails'] = paymentDetails;
-        res.json(orderInfo);
 
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }        
 
-}); 
 
-/*############## CHAT ##############*/
-//List of employees with the last message
-app.get('/api/chat/list/:id', (req, res) => {
-    const custID = req.params.id;
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        const decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+// update ข้อมูลผู้ใช้
+app.post('/api/user/update/:id', async function(req, res) {
+    const { id } = req.params;
+    let { username, email, firstname, lastname, nickname, gender, interestGender, height, home, DateBirth, education, goal, preferences } = req.body;
+
+    try {
+        // Fetch current user data
+        const [userResult] = await db.promise().query("SELECT * FROM User WHERE UserId = ?", [id]);
+        if (userResult.length === 0) {
+            return res.status(404).send({ message: "ไม่พบผู้ใช้ที่ต้องการอัปเดต", status: false });
         }
 
-        const sql = `
-        SELECT chat.empID, message, orderID,
-            CASE
-            WHEN CAST(CURRENT_TIMESTAMP AS DATE) = SUBSTRING(chatTime,1,10) THEN 
-                 CONCAT(DATE_FORMAT(chatTime,"%H.%i")," น.")
-            ELSE DATE_FORMAT(chatTime,"%d/%m")
-            END AS chatTime,
-            imageFile, CONCAT(firstName," ", lastName) AS employee
-        FROM chat
-            INNER JOIN employee ON chat.empID = employee.empID
-        WHERE msgID IN
-            (SELECT max(msgID) FROM chat WHERE custID = ? GROUP BY empID)
-        ORDER BY chatTime DESC`;
-      
-        db.query(sql, [custID], (err, results) => {
-          if (err) throw err;
-          res.json(results);
+        const currentUser = userResult[0];
+
+        // ตรวจสอบว่า username ไม่ใช่ค่าว่าง
+        if (!username || username.trim() === "") {
+            return res.status(400).send({ message: "ชื่อผู้ใช้ไม่สามารถว่างได้", status: false });
+        }
+
+        // Use current data if no new data is provided
+        email = email || currentUser.email;
+        firstname = firstname || currentUser.firstname;
+        lastname = lastname || currentUser.lastname;
+        nickname = nickname || currentUser.nickname;
+        height = height || currentUser.height;
+        home = home || currentUser.home;
+
+        // Handle DateBirth: ถ้าไม่มีการส่งมา ใช้ค่าปัจจุบันในฐานข้อมูล
+        if (DateBirth && DateBirth !== '') {
+            DateBirth = new Date(DateBirth).toISOString().split('T')[0]; // Convert to YYYY-MM-DD format
+        } else {
+            DateBirth = currentUser.DateBirth; // Keep old DateBirth if not updated
+        }
+
+        // Translate gender name to ID
+        let genderID = currentUser.GenderID;
+        if (gender && gender !== '') {
+            const [genderResult] = await db.promise().query("SELECT GenderID FROM gender WHERE Gender_Name = ?", [gender]);
+            if (genderResult.length === 0) {
+                return res.status(404).send({ message: "ไม่พบเพศที่ระบุ", status: false });
+            }
+            genderID = genderResult[0].GenderID;
+        }
+
+        // Translate interestGender name to ID
+        let interestGenderID = currentUser.InterestGenderID;
+        if (interestGender && interestGender !== '') {
+            const [interestGenderResult] = await db.promise().query("SELECT interestGenderID FROM interestgender WHERE interestGenderName = ?", [interestGender]);
+            if (interestGenderResult.length === 0) {
+                return res.status(404).send({ message: "ไม่พบเพศที่สนใจที่ระบุ", status: false });
+            }
+            interestGenderID = interestGenderResult[0].interestGenderID;
+        }
+
+        // Translate education name to ID
+        let educationID = currentUser.educationID;
+        if (education && education !== '') {
+            const [educationResult] = await db.promise().query("SELECT EducationID FROM education WHERE EducationName = ?", [education]);
+            if (educationResult.length === 0) {
+                return res.status(404).send({ message: "ไม่พบการศึกษาที่ระบุ", status: false });
+            }
+            educationID = educationResult[0].EducationID;
+        }
+
+        // Translate goal name to ID
+        let goalID = currentUser.goalID;
+        if (goal && goal !== '') {
+            const [goalResult] = await db.promise().query("SELECT goalID FROM goal WHERE goalName = ?", [goal]);
+            if (goalResult.length === 0) {
+                return res.status(404).send({ message: "ไม่พบเป้าหมายที่ระบุ", status: false });
+            }
+            goalID = goalResult[0].goalID;
+        }
+
+        // Update the User table with all the fields
+        const updateUserSql = `
+            UPDATE User 
+            SET username = ?, email = ?, firstname = ?, lastname = ?, nickname = ?, GenderID = ?, InterestGenderID = ?, height = ?, home = ?, DateBirth = ?, educationID = ?, goalID = ?
+            WHERE UserId = ?
+        `;
+        await db.promise().query(updateUserSql, [username, email, firstname, lastname, nickname, genderID, interestGenderID, height, home, DateBirth, educationID, goalID, id]);
+
+        // Update preferences in userpreferences table
+        if (preferences && Array.isArray(preferences)) {
+            // ลบ preference เก่าทั้งหมดของผู้ใช้
+            await db.promise().query("DELETE FROM userpreferences WHERE UserID = ?", [id]);
+
+            // เพิ่ม preference ใหม่
+            for (const preference of preferences) {
+                const [preferenceResult] = await db.promise().query("SELECT PreferenceID FROM preferences WHERE PreferenceNames = ?", [preference]);
+                if (preferenceResult.length > 0) {
+                    await db.promise().query("INSERT INTO userpreferences (UserID, PreferenceID) VALUES (?, ?)", [id, preferenceResult[0].PreferenceID]);
+                }
+            }
+        }
+
+        res.send({ message: "ข้อมูลถูกอัปเดตเรียบร้อย", status: true });
+    } catch (err) {
+        console.error('Database update error:', err);
+        res.status(500).send({ message: "เกิดข้อผิดพลาดในการอัปเดตข้อมูลผู้ใช้", status: false });
+    }
+});
+
+
+// API สำหรับอัปเดต preferences ของผู้ใช้
+app.post('/api/user/update_preferences/:id', async function (req, res) {
+    const { id } = req.params; // รับ userID จากพารามิเตอร์
+    const { preferences } = req.body; // รับข้อมูล preferences เป็น comma-separated string
+
+    try {
+        // ตรวจสอบว่ามีการส่งข้อมูล preferences มาหรือไม่
+        if (!preferences || preferences.trim() === "") {
+            return res.status(400).send({ message: "Preferences ไม่สามารถว่างได้", status: false });
+        }
+
+        // ลบ preferences เก่าของผู้ใช้ในฐานข้อมูล
+        await db.promise().query("DELETE FROM userpreferences WHERE UserID = ?", [id]);
+
+        // แปลง comma-separated string เป็น array
+        const preferencesArray = preferences.split(",");
+
+        // เพิ่ม preferences ใหม่ในฐานข้อมูล
+        for (const preferenceID of preferencesArray) {
+            const preferenceIDNumber = parseInt(preferenceID.trim()); // แปลงเป็น integer
+            if (isNaN(preferenceIDNumber)) {
+                return res.status(400).send({ message: "Preference ID ไม่ถูกต้อง", status: false });
+            }
+
+            // ตรวจสอบว่า PreferenceID มีอยู่ในตาราง preferences หรือไม่
+            const [preferenceExists] = await db.promise().query("SELECT PreferenceID FROM preferences WHERE PreferenceID = ?", [preferenceIDNumber]);
+            if (preferenceExists.length === 0) {
+                return res.status(404).send({ message: `ไม่พบ PreferenceID: ${preferenceIDNumber}`, status: false });
+            }
+
+            // เพิ่มข้อมูลในตาราง userpreferences
+            await db.promise().query("INSERT INTO userpreferences (UserID, PreferenceID) VALUES (?, ?)", [id, preferenceIDNumber]);
+        }
+
+        res.send({ message: "Preferences ถูกอัปเดตเรียบร้อย", status: true });
+    } catch (err) {
+        console.error('Database error:', err);
+        res.status(500).send({ message: "เกิดข้อผิดพลาดในการอัปเดต preferences", status: false });
+    }
+});
+
+
+
+
+app.put('/api/user/update/:id', upload.single('image'), async function (req, res) {
+    const { id } = req.params;
+    let { username, email, firstname, lastname, nickname, gender, interestGender, height, home, DateBirth, education, goal, preferences } = req.body;
+    const image = req.file ? req.file.filename : null;
+
+    try {
+        // ตรวจสอบว่า username ไม่เป็นค่าว่าง
+        if (!username || username.trim() === "") {
+            return res.status(400).send({ message: "Username ไม่สามารถเว้นว่างได้", status: false });
+        }
+
+        // Fetch current user data
+        const [userResult] = await db.promise().query("SELECT * FROM User WHERE UserId = ?", [id]);
+        if (userResult.length === 0) {
+            return res.status(404).send({ message: "ไม่พบผู้ใช้ที่ต้องการอัปเดต", status: false });
+        }
+
+        const currentUser = userResult[0];
+
+        // Translate GenderID, EducationID, GoalID, InterestGenderID
+        let genderID = currentUser.GenderID;
+        if (gender) {
+            const [genderResult] = await db.promise().query("SELECT GenderID FROM gender WHERE Gender_Name = ?", [gender]);
+            if (genderResult.length > 0) {
+                genderID = genderResult[0].GenderID;
+            }
+        }
+
+        let interestGenderID = currentUser.InterestGenderID;
+        if (interestGender) {
+            const [interestGenderResult] = await db.promise().query("SELECT interestGenderID FROM interestgender WHERE interestGenderName = ?", [interestGender]);
+            if (interestGenderResult.length > 0) {
+                interestGenderID = interestGenderResult[0].interestGenderID;
+            }
+        }
+
+        let educationID = currentUser.educationID;
+        if (education) {
+            const [educationResult] = await db.promise().query("SELECT EducationID FROM education WHERE EducationName = ?", [education]);
+            if (educationResult.length > 0) {
+                educationID = educationResult[0].EducationID;
+            }
+        }
+
+        let goalID = currentUser.goalID;
+        if (goal) {
+            const [goalResult] = await db.promise().query("SELECT goalID FROM goal WHERE goalName = ?", [goal]);
+            if (goalResult.length > 0) {
+                goalID = goalResult[0].goalID;
+            }
+        }
+
+        // อัปเดต preferences หลายรายการ
+        if (preferences && Array.isArray(preferences)) {
+            // ลบ preference เก่าทั้งหมดของผู้ใช้
+            await db.promise().query("DELETE FROM userpreferences WHERE UserID = ?", [id]);
+
+            // เพิ่ม preference ใหม่
+            for (const preference of preferences) {
+                const [preferenceResult] = await db.promise().query("SELECT PreferenceID FROM preferences WHERE PreferenceNames = ?", [preference]);
+                if (preferenceResult.length > 0) {
+                    await db.promise().query("INSERT INTO userpreferences (UserID, PreferenceID) VALUES (?, ?)", [id, preferenceResult[0].PreferenceID]);
+                }
+            }
+        }
+
+        // Handle image update
+        let currentImageFile = image;
+        if (!currentImageFile) {
+            // ถ้าไม่มีภาพใหม่และผู้ใช้ไม่มีภาพเก่าอยู่ในระบบ ให้ currentImageFile เป็นค่าว่าง
+            currentImageFile = currentUser.imageFile || '';
+        } else {
+            // ถ้ามีการอัปโหลดภาพใหม่ ให้ทำการตั้งชื่อไฟล์ใหม่และอัปเดต
+            const ext = path.extname(req.file.originalname);
+            const newFileName = `${uuidv4()}${ext}`;
+            fs.renameSync(req.file.path, path.join('uploads', newFileName));
+            currentImageFile = newFileName;
+
+            // ลบภาพเก่าถ้ามีอยู่
+            if (currentUser.imageFile && currentUser.imageFile !== '') {
+                const oldImagePath = path.join(__dirname, 'uploads', currentUser.imageFile);
+                if (fs.existsSync(oldImagePath)) {
+                    fs.unlinkSync(oldImagePath);
+                }
+            }
+        }
+
+        // อัปเดตข้อมูลผู้ใช้ รวมถึง InterestGenderID, PreferenceID และรูปภาพ
+        const sqlUpdate = `
+            UPDATE User 
+            SET username = ?, email = ?, firstname = ?, lastname = ?, nickname = ?, imageFile = ?, GenderID = ?, InterestGenderID = ?, height = ?, home = ?, DateBirth = ?, educationID = ?, goalID = ?
+            WHERE UserId = ?`;
+        await db.promise().query(sqlUpdate, [username, email, firstname, lastname, nickname, currentImageFile, genderID, interestGenderID, height, home, DateBirth, educationID, goalID, id]);
+
+        const imageUrl = currentImageFile ? `${req.protocol}://${req.get('host')}/uploads/${currentImageFile}` : null;
+
+        res.send({
+            message: "ข้อมูลผู้ใช้อัปเดตสำเร็จ",
+            status: true,
+            image: imageUrl
         });
-
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+    } catch (err) {
+        console.error('Database update error:', err);
+        res.status(500).send({ message: "การอัปเดตข้อมูลผู้ใช้ล้มเหลว", status: false });
     }
-});  
+});
 
-    
-//ค้นหารหัสพนักงานที่มีการแชตกับลุกค้าน้อยที่สุด
-async function getEmpID() {
-    let empID = -1;
 
-    let sql = `
-    SELECT employee.empID, COUNT(orderID) AS orderCount 
-    FROM employee 
-        LEFT JOIN chat ON employee.empID = chat.empID         
-    GROUP BY employee.empID 
-    ORDER BY orderCount ASC 
-    LIMIT 1`;
 
-    const results = await query(sql, []);
 
-    if (results.length > 0) {
-        empID = results[0].empID;
-    } else {
-        sql = `
-        SELECT empID
-        FROM employee
-        ORDER BY RAND()
-        LIMIT 1`;
+// API สำหรับการลบผู้ใช้
+app.delete('/api/user/:id', async function (req, res) {
+    const { id } = req.params;
 
-        const randomResults = await query(sql);
-        empID = randomResults[0].empID;
+    const sqlGetUserImage = "SELECT imageFile FROM User WHERE UserId = ?";
+    const sqlDeleteUser = "DELETE FROM User WHERE UserId = ?";
+
+    try {
+        // ดึงชื่อไฟล์รูปภาพของผู้ใช้
+        const [imageResult] = await db.promise().query(sqlGetUserImage, [id]);
+
+        if (imageResult.length > 0) {
+            const imageFile = imageResult[0].imageFile;
+
+            // ลบข้อมูลผู้ใช้ในตาราง User
+            const [deleteResult] = await db.promise().query(sqlDeleteUser, [id]);
+
+            if (deleteResult.affectedRows > 0) {
+                // ลบไฟล์รูปภาพจากโฟลเดอร์ uploads
+                if (imageFile) {
+                    const filePath = path.join(__dirname, 'uploads', imageFile);
+                    fs.unlink(filePath, (err) => {
+                        if (err) {
+                            console.error('Error deleting image file:', err);
+                        } else {
+                            console.log('Image file deleted:', filePath);
+                        }
+                    });
+                }
+
+                res.send({ message: "ลบข้อมูลผู้ใช้สำเร็จ", status: true });
+            } else {
+                res.status(404).send({ message: "ไม่พบผู้ใช้ที่ต้องการลบ", status: false });
+            }
+        } else {
+            res.status(404).send({ message: "ไม่พบผู้ใช้ที่ต้องการลบ", status: false });
+        }
+    } catch (err) {
+        console.error('Database delete error:', err);
+        res.status(500).send({ message: "เกิดข้อผิดพลาดในการลบข้อมูลผู้ใช้", status: false });
     }
+});
 
-    return empID;
+
+
+
+
+
+
+
+
+// Function to execute a query with a promise-based approach
+function query(sql, params) {
+    return new Promise(function (resolve, reject) {
+        db.query(sql, params, function (err, results) {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(results);
+            }
+        });
+    });
 }
 
-//Send a message
-app.post('/api/chat/post', async (req, res) => {  
-    let { message, custID, empID, orderID} = req.body;    
-    const sender = 'c';
-    const token = req.headers["authorization"].replace("Bearer ", "");
+// Create or join a chat room
+app.post('/chat/join', async function (req, res) {
+    const { userID, chatRoomName } = req.body;
 
-    try{
-        const decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {            
-            return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }
+    // Check if the chat room exists, if not create it
+    let sql = 'SELECT chat_room_id FROM chat_rooms WHERE chat_room_name = ?';
+    let results = await query(sql, [chatRoomName]);
 
-        let sql = `
-        SELECT  chat.empID
-        FROM chat
-            INNER JOIN employee ON chat.empID = employee.empID
-        WHERE chat.custID = ? AND chat.orderID = ?
-        LIMIT 1`;  
-        
-        const result = await query(sql, [custID, orderID]);
-    
-        if(result.length>0){            
-            empID = result[0].empID;
-        }else{            
-            empID = await getEmpID();                        
-        }            
-    
-        sql = 'INSERT INTO chat(message, custID, empID, orderID, sender) VALUES (?, ?, ?, ?, ?)';        
-        try {
-            await query(sql, [message, custID, empID, orderID, sender]);
-            res.send({'message':'success','status':true});
-        } catch (err) {        
-            res.status(500).send('Internal Server Error');
-        }  
-
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+    let chatRoomID;
+    if (results.length === 0) {
+        sql = 'INSERT INTO chat_rooms (chat_room_name) VALUES (?)';
+        const insertResult = await query(sql, [chatRoomName]);
+        chatRoomID = insertResult.insertId;
+    } else {
+        chatRoomID = results[0].chat_room_id;
     }
 
-});
-  
-//Show messages
-app.post('/api/chat/show', async (req, res) => {
-    let { custID, empID, orderID } = req.body;
-    const token = req.headers["authorization"].replace("Bearer ", "");
-
-    try{
-        const decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }
-        
-        //console.log('show:'+empID);
-        let sql = `
-        SELECT  chat.empID
-        FROM chat
-            INNER JOIN employee ON chat.empID = employee.empID
-        WHERE chat.custID = ? AND chat.orderID = ?
-        LIMIT 1`;  
-        const result = await query(sql, [custID, orderID]);
-
-        if(result.length>0){
-            empID = result[0].empID;
-        }else{
-            empID = await getEmpID();
-        }
-
-        sql = `
-        SELECT  message,
-        CASE
-            WHEN CAST(CURRENT_TIMESTAMP AS DATE) = SUBSTRING(chatTime,1,10) THEN CONCAT(DATE_FORMAT(chatTime, "%H.%i")," น.")
-            ELSE DATE_FORMAT(chatTime,"%d/%m")
-        END AS chatTime, sender, orderID, imageFile
-        FROM chat
-            INNER JOIN employee ON chat.empID = employee.empID
-        WHERE chat.custID = ? AND chat.empID = ? AND chat.orderID = ?
-        ORDER BY msgID ASC`;
-        
-        const results = await query(sql, [custID, empID, orderID]);
-        res.json(results);
-
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }        
+    res.send({ 'message': 'User joined chat room', 'status': true, chatRoomID });
 });
 
-//Send a message (employee)
-app.post('/api/employee/chat/post', async (req, res) => {  
-    let { message, custID, empID, orderID} = req.body;    
-    const sender = 'e';
-    const token = req.headers["authorization"].replace("Bearer ", "");
+// Post a message in a chat room
+app.post('/chat/post', async function (req, res) {
+    const { chatRoomID, senderID, message } = req.body;
 
-    try{
-        const decode = jwt.verify(token, SECRET_KEY);               
-        if(empID != decode.empID) {            
-            return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }      
-    
-        sql = 'INSERT INTO chat(message, custID, empID, orderID, sender) VALUES (?, ?, ?, ?, ?)';        
-        try {
-            await query(sql, [message, custID, empID, orderID, sender]);
-            res.send({'message':'success','status':true});
-        } catch (err) {        
-            res.status(500).send('Internal Server Error');
-        }  
+    // Insert the message into the database
+    let sql = 'INSERT INTO messages (chat_room_id, sender_id, message) VALUES (?, ?, ?)';
+    await query(sql, [chatRoomID, senderID, message]);
 
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }
-
+    res.send({ 'message': 'Message posted successfully', 'status': true });
 });
-  
-  
-/*############## DASHBOARD ##############*/
-//ยอดการสั่งซื้อรายปี (บาท)    
-app.get('/api/yearlySale/:id', (req, res) => {
-    const custID = req.params.id;
-    const token = req.headers["authorization"].replace("Bearer ", "");
-    try{
-        const decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }
 
-        const sql = `
-        SELECT SUBSTRING(orders.orderDate,1,4) AS year,
-            SUM(orderdetail.quantity*orderdetail.price) AS totalAmount
-        FROM product
-            INNER JOIN orderdetail ON product.productID=orderdetail.productID
-            INNER JOIN orders ON orderdetail.orderID=orders.orderID
-        WHERE orders.custID=? AND orders.statusID>=3
-        GROUP BY SUBSTRING(orders.orderDate,1,4)
-        ORDER BY SUBSTRING(orders.orderDate,1,4) ASC
-        LIMIT 5`;
-      
-        db.query(sql, [custID], (err, results) => {
-          if (err) throw err;
-          res.json(results);
-        });
+// Show messages from a chat room
+app.get('/chat/show/:chatRoomID', async function (req, res) {
+    const chatRoomID = req.params.chatRoomID;
 
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }
+    let sql = `SELECT m.message, u.username AS sender, 
+                    CASE
+                      WHEN CAST(CURRENT_TIMESTAMP AS DATE) = SUBSTRING(m.sent_at,1,10) THEN CONCAT(DATE_FORMAT(m.sent_at, "%H:%i"), " น.")
+                      ELSE DATE_FORMAT(m.sent_at, "%d/%m")
+                    END AS sent_at
+                FROM messages m
+                JOIN user u ON m.sender_id = u.UserID
+                WHERE m.chat_room_id = ?
+                ORDER BY m.sent_at ASC`;
 
-});  
+    const result = await query(sql, [chatRoomID]);
+    res.send(result);
+});
 
-//ยอดการสั่งซื้อรายเดือน (บาท)    
-app.get('/api/monthlySale/:id', (req, res) => {
-    const currentDate = new Date();
-    const year = currentDate.getFullYear();
-    const custID = req.params.id;
-    const token = req.headers["authorization"].replace("Bearer ", "");
 
-    try{
-        const decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }    
+// Show messages from a chat room
+app.get('/chat/show/:chatRoomID', async function (req, res) {
+    const chatRoomID = req.params.chatRoomID;
     
-        const sql = `
-        SELECT SUBSTRING(orders.orderDate,6,2) AS month,
-            SUM(orderdetail.quantity*orderdetail.price) AS totalAmount
-        FROM product
-            INNER JOIN orderdetail ON product.productID=orderdetail.productID
-            INNER JOIN orders ON orderdetail.orderID=orders.orderID
-        WHERE orders.custID=? AND SUBSTRING(orderDate,1,4)=? AND orders.statusID>=3
-        GROUP BY SUBSTRING(orders.orderDate,6,2)
-        ORDER BY SUBSTRING(orders.orderDate,6,2) ASC`;
+    let sql = `SELECT m.message, u.username AS sender, 
+                    CASE
+                      WHEN CAST(CURRENT_TIMESTAMP AS DATE) = SUBSTRING(m.sent_at,1,10) THEN CONCAT(DATE_FORMAT(m.sent_at, "%H:%i"), " น.")
+                      ELSE DATE_FORMAT(m.sent_at, "%d/%m")
+                    END AS sent_at
+                FROM messages m
+                JOIN user u ON m.sender_id = u.UserID
+                WHERE m.chat_room_id = ?
+                ORDER BY m.sent_at ASC`;
     
-        db.query(sql, [custID, year], (err, results) => {
-            if (err) throw err;
-            res.json(results);
-        });
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }
-
-});  
-  
-//สินค้าที่มียอดการสั่งซื้อ 5 อันดับแรก (บาท)
-app.get('/api/topFiveProduct/:id', (req, res) => {
-
-    const currentDate = new Date();
-    const year = currentDate.getFullYear();
-    const custID = req.params.id;
-    const token = req.headers["authorization"].replace("Bearer ", "");
-
-    try{
-        const decode = jwt.verify(token, SECRET_KEY);               
-        if(custID != decode.custID) {
-          return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
-        }   
-
-        const sql = `
-        SELECT product.productID, productName,
-            SUM(orderdetail.quantity*orderdetail.price) AS totalAmount 
-        FROM product
-            INNER JOIN orderdetail ON product.productID=orderdetail.productID 
-            INNER JOIN orders ON orderdetail.orderID=orders.orderID 
-        WHERE orders.custID=? AND SUBSTRING(orderDate,1,4)=? AND orders.statusID>=3 
-        GROUP BY product.productID, productName
-        ORDER BY SUM(orderdetail.quantity*orderdetail.price) DESC 
-        LIMIT 5`;
-    
-        db.query(sql, [custID, year], (err, results) => {
-            if (err) throw err;
-            res.json(results);
-        });
-    }catch(error){
-        res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
-    }
-
-}); 
+    const result = await query(sql, [chatRoomID]);
+    res.send(result);
+});
 
 
-/*############## WEB SERVER ##############*/  
-// Create an HTTPS server
-const httpsServer = https.createServer(credentials, app);
-app.listen(port, () => {
-    console.log(`HTTPS Server running on port ${port}`);
+
+
+app.listen(process.env.SERVER_PORT, () => {
+    console.log(`Server listening on port ${process.env.SERVER_PORT}`);
 });

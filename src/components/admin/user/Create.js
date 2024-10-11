@@ -1,18 +1,19 @@
-import { React, useState, useEffect } from "react";
-import { createTheme, ThemeProvider } from '@mui/material/styles';
+import * as React from 'react';
 import Avatar from '@mui/material/Avatar';
-import Grid from '@mui/material/Grid';
-import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CssBaseline from '@mui/material/CssBaseline';
 import TextField from '@mui/material/TextField';
+import Grid from '@mui/material/Grid';
+import Box from '@mui/material/Box';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import Typography from '@mui/material/Typography';
 import Container from '@mui/material/Container';
+import { createTheme, ThemeProvider } from '@mui/material/styles';
+import { useState } from "react";
 import axios from "axios";
-import { useParams } from 'react-router-dom';
 import BackgroundImage from '../../assets/BG.png';
 
+// Custom theme (เหมือนกับหน้ารายการข้อมูลลูกค้า)
 const customTheme = createTheme({
   palette: {
     mode: 'dark',
@@ -37,51 +38,38 @@ const customTheme = createTheme({
       color: '#000000',
     },
     h6: {
-      color: '#000000',
+      color: '#000000 ',
       fontWeight: 'bold',
     },
   },
 });
 
-const token = localStorage.getItem('token');
-const url = process.env.REACT_APP_BASE_URL;
-
-export default function Update() {
+export default function Create() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const { id } = useParams();
-
-  useEffect(() => {
-    axios.get(`${url}/profile/${id}`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    }).then(response => {
-      const customer = response.data;
-      setUsername(customer.username);
-      setFirstName(customer.firstName);
-      setLastName(customer.lastName);
-    }).catch(error => {
-      console.error('Error fetching customer data:', error);
-    });
-  }, [id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const response = await axios.put(`${url}/customer/${id}`, {
-      username, password, firstName, lastName
-    }, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
+    const response = await axios.post(process.env.REACT_APP_BASE_URL + '/register',
+      {
+        username,
+        password,
+        firstName,
+        lastName
+      }
+    );
 
     const result = response.data;
+    console.log(result);
     alert(result['message']);
 
     if (result['status'] === true) {
-      window.location.href = '/admin/customer';
+      window.location.href = '/admin/user';
     }
-  };
+  }
 
   return (
     <ThemeProvider theme={customTheme}>
@@ -114,11 +102,11 @@ export default function Update() {
             <Avatar sx={{ m: 1, bgcolor: 'secondary.main' }}>
               <LockOutlinedIcon />
             </Avatar>
-            <Typography component="h1" variant="h4" sx={{ color: '#1976d2', mb: 2 }}>
-              แก้ไขข้อมูลลูกค้า
+            <Typography component="h1" variant="h4" sx={{ color: '#1976d2', mb: 2 }}> {/* Increase the font size */}
+              เพิ่มข้อมูลสมาชิก
             </Typography>
             <Box component="form" noValidate onSubmit={handleSubmit} sx={{ mt: 3 }}>
-              <Grid container spacing={3}>
+              <Grid container spacing={3}> {/* Increase spacing between fields */}
                 <Grid item xs={12} sm={6}>
                   <TextField
                     autoComplete="given-name"
@@ -130,7 +118,7 @@ export default function Update() {
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     autoFocus
-                    sx={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', fontSize: '1.1rem' }}
+                    sx={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', fontSize: '1.1rem' }}  // Slightly larger font
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
@@ -151,7 +139,7 @@ export default function Update() {
                     required
                     fullWidth
                     id="username"
-                    label="ชื่อผู้ใช้"
+                    label="ชื่่อผู้ใช้"
                     name="username"
                     autoComplete="username"
                     value={username}
@@ -175,18 +163,18 @@ export default function Update() {
                 </Grid>
               </Grid>
               <Button
-                id="btnUpdate"
-                name="btnUpdate"
+                id="btnCreate"
+                name="btnCreate"
                 type="submit"
                 fullWidth
                 variant="contained"
                 sx={{
-                  mt: 4,
-                  mb: 3,
-                  backgroundColor: '#333',
+                  mt: 4,  // Increase top margin
+                  mb: 3,  // Increase bottom margin
+                  backgroundColor: '#333',  // Adjust button color to match primary theme
                   color: 'white',
-                  padding: '14px',
-                  fontSize: '1.1rem',
+                  padding: '14px',  // Increase padding for better touch experience
+                  fontSize: '1.1rem'  // Slightly larger font for the button
                 }}
               >
                 บันทึกข้อมูล

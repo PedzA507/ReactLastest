@@ -25,7 +25,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from "axios";
 import BackgroundImage from '../../assets/BG.png';
 
-// Custom theme
+const drawerWidth = 240;
+const token = localStorage.getItem('token');
+const url = process.env.REACT_APP_BASE_URL;
+
+// Custom theme (เหมือนกับ Dashboard)
 const customTheme = createTheme({
   palette: {
     mode: 'dark',
@@ -47,18 +51,14 @@ const customTheme = createTheme({
       color: '#000000',
     },
     h5: {
-      color: '#ffffff',
+      color: '#000000',
     },
     h6: {
-      color: '#ffffff',
+      color: '#000000',
       fontWeight: 'bold',
     },
   },
 });
-
-const drawerWidth = 240;
-const token = localStorage.getItem('token');
-const url = process.env.REACT_APP_BASE_URL;
 
 export default function View() {
   const [firstName, setFirstName] = useState("");
@@ -66,43 +66,40 @@ export default function View() {
   const [email, setEmail] = useState("");
   const [gender, setGender] = useState("");
   const [imageFile, setImageFile] = useState("");
-  const [address, setAddress] = useState("");
-  const [homePhone, setHomePhone] = useState("");
+  const [home, sethome] = useState("");  // Home home
+  const [phonenumber, setphonenumber] = useState("");  // Phone number
   const { id } = useParams();
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Fetch the current customer data when the component is mounted      
-    axios.get(`${url}/profile/${id}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      })
-      .then(response => {
-        const customer = response.data;
-        setFirstName(customer.firstName);
-        setLastName(customer.lastName);
-        setEmail(customer.email);
-        setGender(customer.gender);
-        setImageFile(customer.imageFile);
-        setAddress(customer.address);
-        setHomePhone(customer.homePhone);
-      })
-      .catch(error => {
-        console.error('Error fetching customer data:', error);
-      });
+    // Fetch the current user data including home and phone number      
+    axios.get(`${url}/profile/${id}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    .then(response => {
+      const user = response.data;
+      setFirstName(user.firstname);
+      setLastName(user.lastname);
+      setEmail(user.email);
+      setGender(user.GenderID);
+      setImageFile(user.imageFile);
+      sethome(user.home);  // Set the home
+      setphonenumber(user.phonenumber);  // Set the phone number
+    })
+    .catch(error => {
+      console.error('Error fetching user data:', error);
+    });
   }, [id]);
 
   // Function to handle user update
   const UpdateUser = (id) => {
-    navigate(`/admin/customer/update/${id}`);
+    navigate(`/admin/user/update/${id}`);
   }
 
   const menuItems = [
     { text: 'Home', icon: <HomeIcon />, action: () => navigate('/') },
     { text: 'Add Employee', icon: <AnalyticsIcon />, action: () => navigate('/addemployee') },
-    { text: 'Clients', icon: <PeopleIcon />, action: () => navigate('/admin/customer') },
+    { text: 'Clients', icon: <PeopleIcon />, action: () => navigate('/admin/user') },
     { text: 'Tasks', icon: <AnalyticsIcon />, action: () => navigate('/tasks') },
     { text: 'Settings', icon: <SettingsIcon />, action: () => navigate('/settings') },
     { text: 'Feedback', icon: <FeedbackIcon />, action: () => navigate('/feedback') },
@@ -140,42 +137,40 @@ export default function View() {
           </Box>
         </Drawer>
 
-        <Container maxWidth="md" sx={{ marginTop: 10, marginBottom: 10, display: 'flex', justifyContent: 'center' }}> {/* เพิ่ม marginBottom เพื่อลดขอบล่าง */}
-  <Card sx={{ backgroundColor: 'rgba(255, 255, 255, 0.9)', borderRadius: '15px', boxShadow: '0 8px 16px rgba(0, 0, 0, 0.2)', padding: '30px', width: '100%' }}>
-    <CardContent>
-      <Grid container spacing={4} alignItems="center">
-        <Grid item xs={12} sm={4}>
-          <Avatar sx={{ width: 150, height: 150 }}
-            src={url + '/customer/image/' + imageFile} />
-        </Grid>
-        <Grid item xs={12} sm={8}>
-          <Typography variant="h4" gutterBottom>
-            {firstName} {lastName}
-          </Typography>
-          <Typography color="textSecondary" gutterBottom>
-            {email}
-          </Typography>
-          <Typography color="textSecondary">
-            เพศ : {gender === 0 ? "ชาย" : gender === 1 ? "หญิง" : "-"}
-          </Typography>
-        </Grid>
-      </Grid>
-      <Divider sx={{ marginY: 2 }} />
-      <Typography variant="body1" gutterBottom>
-        ที่อยู่ : {address ? address : 'No address provided'}
-      </Typography>
-      <Typography variant="body1" gutterBottom>
-        เบอร์โทร : {homePhone ? homePhone : 'No phone number provided'}
-      </Typography>
-      <Divider sx={{ marginY: 2 }} />
-      <Button variant="contained" color="primary"
-        onClick={() => UpdateUser(id)}>
-        แก้ไขบัญชีผู้ใช้
-      </Button>
-    </CardContent>
-  </Card>
-</Container>
-
+        <Container maxWidth="md" sx={{ marginTop: 10, marginBottom: 10, display: 'flex', justifyContent: 'center' }}>
+          <Card sx={{ backgroundColor: 'rgba(255, 255, 255, 0.9)', borderRadius: '15px', boxShadow: '0 8px 16px rgba(0, 0, 0, 0.2)', padding: '30px', width: '100%' }}>
+            <CardContent>
+              <Grid container spacing={4} alignItems="center">
+                <Grid item xs={12} sm={4}>
+                  <Avatar sx={{ width: 150, height: 150 }}
+                    src={url + '/user/image/' + imageFile} />
+                </Grid>
+                <Grid item xs={12} sm={8}>
+                  <Typography variant="h4" gutterBottom>
+                    {firstName} {lastName}
+                  </Typography>
+                  <Typography color="textSecondary" gutterBottom>
+                    {email}
+                  </Typography>
+                  <Typography color="textSecondary">
+                    เพศ : {gender === 1 ? "ชาย" : gender === 2 ? "หญิง" : "-"}
+                  </Typography>
+                </Grid>
+              </Grid>
+              <Divider sx={{ marginY: 2 }} />
+              <Typography variant="body1" gutterBottom>
+                ที่อยู่ : {home ? home : 'No home provided'}
+              </Typography>
+              <Typography variant="body1" gutterBottom>
+                เบอร์โทร : {phonenumber ? phonenumber : 'No phone number provided'}
+              </Typography>
+              <Divider sx={{ marginY: 2 }} />
+              <Button variant="contained" color="primary" onClick={() => UpdateUser(id)}>
+                แก้ไขบัญชีผู้ใช้
+              </Button>
+            </CardContent>
+          </Card>
+        </Container>
       </Box>
     </ThemeProvider>
   );

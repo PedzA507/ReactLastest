@@ -3,7 +3,7 @@ import { Button, CssBaseline, TextField, Grid, Box, Typography, Container } from
 import Alert from '@mui/material/Alert';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import axios from 'axios';
-import BackgroundImage from './assets/BG.png';
+import BackgroundImage from '../../assets/BG.png';
 
 // Custom theme 
 const customTheme = createTheme({

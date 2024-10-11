@@ -9,80 +9,77 @@ import FeedbackIcon from '@mui/icons-material/Feedback';
 import InfoIcon from '@mui/icons-material/Info';
 import axios from 'axios';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
-import BackgroundImage from '../../assets/BG.png';
-
-
 
 const drawerWidth = 240;
+const token = localStorage.getItem('token');
+const url = process.env.REACT_APP_BASE_URL;
 
-// Custom theme (เหมือนกับ Dashboard)
 const customTheme = createTheme({
   palette: {
-    mode: 'dark',
     primary: {
       main: '#1976d2',
     },
     background: {
-
-      default: '#1f1f1f',
-      paper: '#242424',
+      default: '#f5f5f5',
     },
     text: {
-      primary: '#ffffff',
-      secondary: '#cccccc',
+      primary: '#000000',
+      secondary: '#666666',
     },
   },
   typography: {
     h1: {
-      fontSize: '2.5rem',
-      color: '#ffffff',
+      fontSize: '2rem',
+      fontWeight: 'bold',
+      color: '#1976d2',
     },
     h5: {
-      color: '#ffffff',
+      color: '#333333',
     },
     h6: {
-      color: '#ffffff',
+      color: '#333333',
       fontWeight: 'bold',
     },
   },
 });
-
-// Fetch token from local storage
-const token = localStorage.getItem('token');
-const url = process.env.REACT_APP_BASE_URL;
 
 export default function Index() {
   const [users, setUsers] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
-    UsersGet(setUsers);
+    UsersGet();
   }, []);
-
+  
   const UsersGet = () => {
-    axios.get(`${url}/customer`, {
+    axios.get(`${url}/user`, {
       headers: {
         'Authorization': `Bearer ${token}`,
       },
     })
-    .then((response) => {
-      setUsers(response.data); 
-    })
-    .catch((error) => {
-      console.error('Error fetching users', error);
-    });
+      .then((response) => {
+        console.log("User Data:", response.data); // Add this line to debug
+        const data = Array.isArray(response.data) ? response.data : []; // Ensure data is always an array
+        setUsers(data); 
+      })
+      .catch((error) => {
+        console.error('Error fetching users', error);
+        setUsers([]); 
+      });
   };
+  
+  
 
   const ViewUser = (id) => {
-    window.location = `/admin/customer/view/${id}`;
-  }
+    navigate(`/admin/user/view/${id}`);
+  };
 
   const UpdateUser = (id) => {
-    window.location = `/admin/customer/update/${id}`;
-  }
+    navigate(`/admin/user/update/${id}`);
+  };
 
   const UserDelete = (id) => {
-    axios.delete(`${url}/customer/${id}`, {
+    axios.delete(`${url}/user/${id}`, {
       headers: {
         'Accept': 'application/form-data',
         'Content-Type': 'application/json',
@@ -105,7 +102,7 @@ export default function Index() {
   const menuItems = [
     { text: 'Home', icon: <HomeIcon />, action: () => navigate('/') },
     { text: 'Add Employee', icon: <AnalyticsIcon />, action: () => navigate('/addemployee') },
-    { text: 'Clients', icon: <PeopleIcon />, action: () => navigate('/admin/customer') },
+    { text: 'Clients', icon: <PeopleIcon />, action: () => navigate('/admin/user') },
     { text: 'Tasks', icon: <AnalyticsIcon />, action: () => navigate('/tasks') },
     { text: 'Settings', icon: <SettingsIcon />, action: () => navigate('/settings') },
     { text: 'Feedback', icon: <FeedbackIcon />, action: () => navigate('/feedback') },
@@ -114,11 +111,7 @@ export default function Index() {
 
   return (
     <ThemeProvider theme={customTheme}>
-      <Box sx={{ display: 'flex', minHeight: '100vh' ,
-          backgroundImage: `url(${BackgroundImage})`, 
-          backgroundSize: 'cover',
-          backgroundPosition: 'center'}}>
-        {/* Sidebar */}
+      <Box sx={{ display: 'flex', minHeight: '100vh' }}>
         <Drawer
           variant="permanent"
           sx={{
@@ -126,8 +119,8 @@ export default function Index() {
             flexShrink: 0,
             '& .MuiDrawer-paper': {
               width: drawerWidth,
-              backgroundColor: '#1f1f1f',
-              color: '#ffffff',
+              backgroundColor: '#f5f5f5',
+              color: '#333333',
             },
           }}
         >
@@ -136,7 +129,7 @@ export default function Index() {
             <List>
               {menuItems.map((item, index) => (
                 <ListItem button key={item.text} onClick={item.action}>
-                  <ListItemIcon sx={{ color: '#ffffff' }}>
+                  <ListItemIcon sx={{ color: '#333333' }}>
                     {item.icon}
                   </ListItemIcon>
                   <ListItemText primary={item.text} />
@@ -146,28 +139,22 @@ export default function Index() {
           </Box>
         </Drawer>
 
-        {/* Main Content */}
-        <Container sx={{ marginTop: 2 }} maxWidth="lg">
-          <Paper sx={{ padding: 2, color: 'text.secondary' }}>
-            <Box display="flex">
-              <Box flexGrow={1}>
-                <Typography component="h2" variant="h6" color="primary" gutterBottom>
-                  รายการข้อมูลลูกค้า
-                </Typography>
-              </Box>
-              <Box>
-                <Link to="/admin/customer/create">
-                  <Button variant="contained" color="primary">
-                    เพิ่มข้อมูลลูกค้า
-                  </Button>
-                </Link>
-              </Box>
+        <Container sx={{ marginTop: 4 }} maxWidth="lg">
+          <Paper sx={{ padding: 3, color: 'text.secondary' }}>
+            <Box display="flex" justifyContent="space-between">
+              <Typography component="h2" variant="h6" color="primary" gutterBottom>
+                จัดการข้อมูลผู้ใช้
+              </Typography>
+              <Link to="/admin/user/create">
+                <Button variant="contained" color="primary">
+                  เพิ่มข้อมูลผู้ใช้
+                </Button>
+              </Link>
             </Box>
             <TableContainer>
-              <Table aria-label="simple table">
+              <Table>
                 <TableHead>
                   <TableRow>
-                    <TableCell align="right">รหัส</TableCell>
                     <TableCell align="center">รูป</TableCell>
                     <TableCell align="left">ชื่อ</TableCell>
                     <TableCell align="left">นามสกุล</TableCell>
@@ -175,24 +162,20 @@ export default function Index() {
                     <TableCell align="center">จัดการข้อมูล</TableCell>
                   </TableRow>
                 </TableHead>
-
                 <TableBody>
                   {users.map((user) => (
-                    <TableRow key={user.custID}>
-                      <TableCell align="right">{user.custID}</TableCell>
+                    <TableRow key={user.UserID}>
                       <TableCell align="center">
-                        <Box display="flex" justifyContent="center">
-                          <Avatar src={url + '/customer/image/' + user.imageFile} />
-                        </Box>
+                        <Avatar src={`${url}/user/image/${user.imageFile}`} />
                       </TableCell>
-                      <TableCell align="left">{user.firstName}</TableCell>
-                      <TableCell align="left">{user.lastName}</TableCell>
+                      <TableCell align="left">{user.firstname}</TableCell>
+                      <TableCell align="left">{user.lastname}</TableCell>
                       <TableCell align="left">{user.username}</TableCell>
                       <TableCell align="center">
-                        <ButtonGroup color="primary" aria-label="outlined primary button group">
-                          <Button onClick={() => ViewUser(user.custID)}>แสดง</Button>
-                          <Button onClick={() => UpdateUser(user.custID)}>แก้ไข</Button>
-                          <Button onClick={() => UserDelete(user.custID)}>&nbsp;ลบ&nbsp;</Button>
+                        <ButtonGroup>
+                          <Button onClick={() => ViewUser(user.UserID)}>ตรวจสอบรายงาน</Button>
+                          <Button onClick={() => UpdateUser(user.UserID)}>แก้ไข</Button>
+                          <Button onClick={() => UserDelete(user.UserID)}>ระงับผู้ใช้</Button>
                         </ButtonGroup>
                       </TableCell>
                     </TableRow>

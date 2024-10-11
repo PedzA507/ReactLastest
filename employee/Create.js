@@ -45,7 +45,7 @@ const customTheme = createTheme({
 });
 
 export default function Create() {
-  const [username, setUsername] = useState("");
+  const [employeename, setemployeename] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -55,7 +55,7 @@ export default function Create() {
 
     const response = await axios.post(process.env.REACT_APP_BASE_URL + '/register',
       {
-        username,
+        employeename,
         password,
         firstName,
         lastName
@@ -67,7 +67,7 @@ export default function Create() {
     alert(result['message']);
 
     if (result['status'] === true) {
-      window.location.href = '/admin/customer';
+      window.location.href = '/admin/employee';
     }
   }
 
@@ -138,12 +138,12 @@ export default function Create() {
                   <TextField
                     required
                     fullWidth
-                    id="username"
+                    id="employeename"
                     label="ชื่่อผู้ใช้"
-                    name="username"
-                    autoComplete="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    name="employeename"
+                    autoComplete="employeename"
+                    value={employeename}
+                    onChange={(e) => setemployeename(e.target.value)}
                     sx={{ backgroundColor: 'rgba(255, 255, 255, 0.8)', fontSize: '1.1rem' }}
                   />
                 </Grid>

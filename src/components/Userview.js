@@ -91,7 +91,7 @@ export default function Cusview() {
               Welcome
             </Typography>
             <Typography component="p" variant="h6" sx={{ mb: 4 }}>
-              You have successfully logged in as a customer!
+              You have successfully logged in as a user!
             </Typography>
           </Box>
           <Copyright sx={{ mt: 5 }} />
